@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime
 from io import BytesIO
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 
 import pandas as pd
 import streamlit as st
@@ -79,7 +79,6 @@ PHONE_PATTERN = re.compile(
 # ============================================================
 
 def clean_text(value):
-
     if value is None:
         return ""
 
@@ -97,22 +96,62 @@ def clean_text(value):
 
 
 def normalize_url(url):
+    """
+    Convert input to clean URL.
 
+    Important:
+    Do NOT remove query string such as:
+    ?area=north
+    """
     url = clean_text(url)
 
     if not url:
         return ""
+
+    # Remove accidental Markdown link syntax
+    if url.startswith("[") and "](" in url:
+        match = re.search(
+            r"\((https?://[^)]+)\)",
+            url
+        )
+        if match:
+            url = match.group(1)
 
     if not url.startswith(
         ("http://", "https://")
     ):
         url = "https://" + url
 
-    return url.rstrip("/")
+    return url.strip()
+
+
+def normalize_for_compare(value):
+    value = clean_text(value).lower()
+
+    # Remove accents only for comparison
+    import unicodedata
+
+    value = unicodedata.normalize(
+        "NFD",
+        value
+    )
+
+    value = "".join(
+        ch
+        for ch in value
+        if unicodedata.category(ch) != "Mn"
+    )
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+    return value.strip()
 
 
 def same_domain(url1, url2):
-
     domain1 = (
         urlparse(url1)
         .netloc
@@ -130,12 +169,20 @@ def same_domain(url1, url2):
     return domain1 == domain2
 
 
+def looks_like_http_url(url):
+    return clean_text(url).startswith(
+        (
+            "http://",
+            "https://"
+        )
+    )
+
+
 # ============================================================
 # BRAND
 # ============================================================
 
 def get_brand_from_url(url):
-
     hostname = (
         urlparse(url)
         .netloc
@@ -152,6 +199,7 @@ def get_brand_from_url(url):
         "kfcvietnam.com.vn": "KFC",
         "lotteria.vn": "LOTTERIA",
         "pizza4ps.com": "PIZZA 4P'S",
+        "pizzahut.vn": "PIZZA HUT",
         "dominos.vn": "DOMINO'S",
         "burgerking.vn": "BURGER KING",
         "galaxypremium.com.vn": "GALAXY",
@@ -173,7 +221,6 @@ def get_brand_from_url(url):
 # ============================================================
 
 def looks_like_address(text):
-
     text = clean_text(text).lower()
 
     if len(text) < 15:
@@ -182,7 +229,6 @@ def looks_like_address(text):
     score = 0
 
     for keyword in ADDRESS_KEYWORDS:
-
         if keyword in text:
             score += 1
 
@@ -192,22 +238,35 @@ def looks_like_address(text):
     ):
         score += 1
 
+    # Comma-separated Vietnamese addresses
+    if text.count(",") >= 1:
+        score += 1
+
     return score >= 1
 
 
 def parse_vietnam_address(address):
-
     """
-    Example:
+    Extract Ward / Province from Vietnamese address.
 
-    Số 1 đường số 17A, Khu phố 11,
-    Phường An Lạc,
+    Examples:
+
+    Số 1 đường số 17A, Khu phố 11, Phường An Lạc,
     Thành phố Hồ Chí Minh
 
-    Result:
+    -> Ward     = Phường An Lạc
+    -> Province = Thành phố Hồ Chí Minh
 
-    Ward     = Phường An Lạc
-    Province = Thành phố Hồ Chí Minh
+    Another example:
+
+    ... Phường Tiền Châu, Thành Phố Phúc Yên,
+    Tỉnh Vĩnh Phúc
+
+    -> Ward     = Phường Tiền Châu
+    -> Province = Tỉnh Vĩnh Phúc
+
+    We therefore DO NOT simply take second-from-last
+    as Ward.
     """
 
     address = clean_text(address)
@@ -221,33 +280,98 @@ def parse_vietnam_address(address):
         if clean_text(x)
     ]
 
-    if len(parts) < 2:
+    if not parts:
         return "", ""
 
-    province = parts[-1]
+    # --------------------------------------------------------
+    # Province
+    # --------------------------------------------------------
+
+    province = ""
+
+    province_patterns = [
+        r"\btỉnh\b",
+        r"\bthành phố\b",
+        r"\bthanh pho\b",
+        r"\btp\.?\b",
+        r"\btp\b",
+        r"\bcity\b",
+    ]
+
+    # Search from right to left.
+    # Usually province/city is near the end.
+    for part in reversed(parts):
+        lower = normalize_for_compare(part)
+
+        if any(
+            re.search(pattern, lower)
+            for pattern in province_patterns
+        ):
+            province = part
+            break
+
+    # If no explicit province keyword:
+    # last component is still used.
+    if not province:
+        province = parts[-1]
+
+    # --------------------------------------------------------
+    # Ward
+    # --------------------------------------------------------
 
     ward = ""
 
-    # Second from the end
-    candidate = parts[-2]
+    ward_patterns = [
+        r"\bphường\b",
+        r"\bphuong\b",
+        r"\bp\.\s*",
+        r"\bward\b",
+        r"\bxã\b",
+        r"\bxa\b",
+        r"\bcommune\b",
+        r"\bthị trấn\b",
+        r"\bthi tran\b",
+    ]
 
-    candidate_lower = candidate.lower()
+    # Search from right to left,
+    # but do not use province itself.
+    province_index = len(parts) - 1
 
-    if any(
-        keyword in candidate_lower
-        for keyword in [
-            "phường",
-            "phuong",
-            "ward",
-        ]
+    for i in range(
+        len(parts) - 1,
+        -1,
+        -1
     ):
-        ward = candidate
+        part = parts[i]
 
-    else:
+        if (
+            province
+            and normalize_for_compare(part)
+            == normalize_for_compare(province)
+        ):
+            continue
 
-        # Nếu không có chữ "phường",
-        # vẫn lấy phần ngay trước tỉnh.
-        ward = candidate
+        lower = normalize_for_compare(part)
+
+        if any(
+            re.search(pattern, lower)
+            for pattern in ward_patterns
+        ):
+            ward = part
+            break
+
+    # Fallback:
+    # If no explicit ward keyword exists,
+    # use component immediately before province.
+    if not ward and len(parts) >= 2:
+        for i in range(
+            len(parts) - 1,
+            -1,
+            -1
+        ):
+            if normalize_for_compare(parts[i]) != normalize_for_compare(province):
+                ward = parts[i]
+                break
 
     return ward, province
 
@@ -257,7 +381,6 @@ def parse_vietnam_address(address):
 # ============================================================
 
 def extract_phone(text):
-
     text = clean_text(text)
 
     matches = PHONE_PATTERN.findall(text)
@@ -268,7 +391,6 @@ def extract_phone(text):
     result = []
 
     for match in matches:
-
         value = clean_text(match)
 
         digits = re.sub(
@@ -286,7 +408,6 @@ def extract_phone(text):
 
 
 def normalize_phone(phone):
-
     phone = clean_text(phone)
 
     if not phone:
@@ -309,20 +430,15 @@ def normalize_phone(phone):
 # ============================================================
 
 def normalize_coordinate(value):
-
     value = clean_text(value)
 
     if not value:
         return ""
 
     try:
-
         number = float(value)
-
         return f"{number:.5f}"
-
     except Exception:
-
         return ""
 
 
@@ -334,7 +450,6 @@ def empty_record(
     brand,
     source_url
 ):
-
     return {
         "Brand": brand,
         "StoreCode": "",
@@ -356,33 +471,26 @@ def empty_record(
 # ============================================================
 
 def flatten_json_objects(obj):
-
     result = []
 
     if isinstance(obj, dict):
-
         result.append(obj)
 
         for value in obj.values():
-
             if isinstance(
                 value,
                 (dict, list)
             ):
-
                 result.extend(
                     flatten_json_objects(value)
                 )
 
     elif isinstance(obj, list):
-
         for item in obj:
-
             if isinstance(
                 item,
                 (dict, list)
             ):
-
                 result.extend(
                     flatten_json_objects(item)
                 )
@@ -394,7 +502,6 @@ def find_value(
     obj,
     possible_keys
 ):
-
     if not isinstance(
         obj,
         dict
@@ -438,7 +545,6 @@ def find_value(
                     float
                 )
             ):
-
                 return value
 
     return ""
@@ -449,7 +555,6 @@ def parse_json_response(
     brand,
     source_url
 ):
-
     records = []
 
     objects = flatten_json_objects(data)
@@ -525,7 +630,6 @@ def parse_json_response(
             obj.get("address"),
             dict
         ):
-
             address_obj = obj.get(
                 "address"
             )
@@ -541,7 +645,6 @@ def parse_json_response(
             )
 
             if not address:
-
                 address = ", ".join(
                     str(x)
                     for x in [
@@ -578,12 +681,10 @@ def parse_json_response(
                     [
                         "address",
                         "formattedaddress",
-                        "name",
                     ]
                 )
 
                 if not lat:
-
                     lat = find_value(
                         location,
                         [
@@ -593,7 +694,6 @@ def parse_json_response(
                     )
 
                 if not lon:
-
                     lon = find_value(
                         location,
                         [
@@ -652,7 +752,6 @@ def parse_json_response(
         record["Address"] = address_text
 
         record["Province"] = province
-
         record["Ward"] = ward
 
         record["Phone"] = clean_text(
@@ -669,7 +768,9 @@ def parse_json_response(
 
         record["Method"] = "API/JSON"
 
-        records.append(record)
+        records.append(
+            record
+        )
 
     return records
 
@@ -683,7 +784,6 @@ def parse_tables(
     brand,
     source_url
 ):
-
     records = []
 
     for table in soup.find_all("table"):
@@ -725,7 +825,9 @@ def parse_tables(
             if not cells:
                 continue
 
-            joined = " | ".join(cells)
+            joined = " | ".join(
+                cells
+            )
 
             if not looks_like_address(
                 joined
@@ -753,7 +855,6 @@ def parse_tables(
                         "mã",
                     ]
                 ):
-
                     record["StoreCode"] = value
 
                 elif any(
@@ -767,7 +868,6 @@ def parse_tables(
                         "tên",
                     ]
                 ):
-
                     record["StoreName"] = value
 
                 elif any(
@@ -778,7 +878,6 @@ def parse_tables(
                         "location",
                     ]
                 ):
-
                     record["Address"] = value
 
                 elif any(
@@ -790,11 +889,20 @@ def parse_tables(
                         "điện thoại",
                     ]
                 ):
-
                     record["Phone"] = value
 
+            # If header did not identify address,
+            # find address-looking cell.
             if not record["Address"]:
-                record["Address"] = joined
+
+                for cell in cells:
+
+                    if looks_like_address(cell):
+                        record["Address"] = cell
+                        break
+
+            if not record["Address"]:
+                continue
 
             ward, province = parse_vietnam_address(
                 record["Address"]
@@ -805,13 +913,15 @@ def parse_tables(
 
             record["Method"] = "HTML Table"
 
-            records.append(record)
+            records.append(
+                record
+            )
 
     return records
 
 
 # ============================================================
-# HTML STORE CARDS
+# GENERIC HTML STORE CARDS
 # ============================================================
 
 def parse_store_cards(
@@ -819,7 +929,6 @@ def parse_store_cards(
     brand,
     source_url
 ):
-
     records = []
 
     nodes = soup.find_all(
@@ -910,10 +1019,7 @@ def parse_store_cards(
             for line in lines:
 
                 if looks_like_address(line):
-
-                    address_lines.append(
-                        line
-                    )
+                    address_lines.append(line)
 
             if address_lines:
 
@@ -973,7 +1079,342 @@ def parse_store_cards(
 
         record["Method"] = "HTML Card"
 
-        records.append(record)
+        records.append(
+            record
+        )
+
+    return records
+
+
+# ============================================================
+# PIZZA HUT PARSER
+# ============================================================
+
+def parse_pizza_hut(
+    soup,
+    brand,
+    source_url
+):
+    """
+    Pizza Hut specific parser.
+
+    Pizza Hut store-location pages do not necessarily expose
+    stores as <article> or <li>. The store information is
+    embedded in the rendered HTML.
+
+    We look for blocks containing:
+        - Pizza Hut store name
+        - Vietnamese address
+    """
+
+    records = []
+
+    # --------------------------------------------------------
+    # First strategy:
+    # Look for elements containing "Pizza Hut"
+    # and an address.
+    # --------------------------------------------------------
+
+    candidates = []
+
+    for element in soup.find_all(
+        [
+            "div",
+            "section",
+            "a",
+            "span",
+            "p",
+        ]
+    ):
+
+        text = clean_text(
+            element.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+        if not text:
+            continue
+
+        lower = text.lower()
+
+        if "pizza hut" not in lower:
+            continue
+
+        if not looks_like_address(text):
+            continue
+
+        if len(text) > 700:
+            continue
+
+        candidates.append(
+            element
+        )
+
+    # --------------------------------------------------------
+    # Prefer the smallest useful DOM blocks.
+    # Remove parents that contain another candidate.
+    # --------------------------------------------------------
+
+    unique_candidates = []
+
+    for element in candidates:
+
+        has_candidate_child = False
+
+        for child in element.find_all(
+            [
+                "div",
+                "section",
+                "a",
+                "span",
+                "p",
+            ]
+        ):
+
+            if child is element:
+                continue
+
+            child_text = clean_text(
+                child.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+            if (
+                "pizza hut" in child_text.lower()
+                and looks_like_address(child_text)
+                and len(child_text) <= 700
+            ):
+                has_candidate_child = True
+                break
+
+        if not has_candidate_child:
+            unique_candidates.append(
+                element
+            )
+
+    # --------------------------------------------------------
+    # Parse candidates
+    # --------------------------------------------------------
+
+    for node in unique_candidates:
+
+        text = clean_text(
+            node.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+        if not text:
+            continue
+
+        # ----------------------------------------------------
+        # Store name
+        # ----------------------------------------------------
+
+        store_name = ""
+
+        # Heading first
+        heading = node.find(
+            [
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "strong",
+                "b",
+            ]
+        )
+
+        if heading:
+
+            heading_text = clean_text(
+                heading.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+            if "pizza hut" in heading_text.lower():
+                store_name = heading_text
+
+        # Search text lines
+        if not store_name:
+
+            lines = [
+                clean_text(x)
+                for x in node.stripped_strings
+                if clean_text(x)
+            ]
+
+            for line in lines:
+
+                if "pizza hut" in line.lower():
+                    store_name = line
+                    break
+
+        if not store_name:
+
+            # Fallback:
+            # find "Pizza Hut ..." phrase
+            match = re.search(
+                r"(Pizza\s+Hut[^\n,|]{0,100})",
+                text,
+                flags=re.IGNORECASE
+            )
+
+            if match:
+                store_name = clean_text(
+                    match.group(1)
+                )
+
+        # ----------------------------------------------------
+        # Address
+        # ----------------------------------------------------
+
+        address = ""
+
+        address_element = node.find(
+            "address"
+        )
+
+        if address_element:
+
+            address = clean_text(
+                address_element.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+        if not address:
+
+            lines = [
+                clean_text(x)
+                for x in node.stripped_strings
+                if clean_text(x)
+            ]
+
+            address_candidates = [
+                line
+                for line in lines
+                if looks_like_address(line)
+                and "pizza hut" not in line.lower()
+            ]
+
+            if address_candidates:
+
+                # Usually the longest address-like line
+                address = max(
+                    address_candidates,
+                    key=len
+                )
+
+        if not address:
+
+            # Search full text for a substring
+            # containing Vietnamese location keywords.
+            parts = [
+                clean_text(x)
+                for x in text.split(" | ")
+                if clean_text(x)
+            ]
+
+            address_candidates = [
+                part
+                for part in parts
+                if looks_like_address(part)
+            ]
+
+            if address_candidates:
+                address = max(
+                    address_candidates,
+                    key=len
+                )
+
+        if not address:
+            continue
+
+        # ----------------------------------------------------
+        # Avoid obviously huge container blocks
+        # ----------------------------------------------------
+
+        if len(address) > 500:
+            continue
+
+        # ----------------------------------------------------
+        # Phone
+        # ----------------------------------------------------
+
+        phone = extract_phone(
+            text
+        )
+
+        ward, province = parse_vietnam_address(
+            address
+        )
+
+        record = empty_record(
+            brand,
+            source_url
+        )
+
+        record["StoreName"] = store_name
+        record["Address"] = address
+        record["Province"] = province
+        record["Ward"] = ward
+        record["Phone"] = phone
+        record["Method"] = "Pizza Hut HTML"
+
+        # ----------------------------------------------------
+        # Store URL
+        # ----------------------------------------------------
+
+        for link in node.find_all(
+            "a",
+            href=True
+        ):
+
+            href = link.get(
+                "href",
+                ""
+            )
+
+            if href.startswith(
+                ("http://", "https://", "/")
+            ):
+
+                full_url = urljoin(
+                    source_url,
+                    href
+                )
+
+                if same_domain(
+                    full_url,
+                    source_url
+                ):
+                    record["StoreURL"] = full_url
+                    break
+
+        # ----------------------------------------------------
+        # Validation
+        # ----------------------------------------------------
+
+        if not record["StoreName"]:
+            continue
+
+        # Must actually look like Pizza Hut store
+        if "pizza hut" not in record["StoreName"].lower():
+            continue
+
+        records.append(
+            record
+        )
 
     return records
 
@@ -990,7 +1431,8 @@ def dedupe_records(records):
     method_priority = {
         "API/JSON": 1,
         "HTML Table": 2,
-        "HTML Card": 3,
+        "Pizza Hut HTML": 3,
+        "HTML Card": 4,
     }
 
     cleaned = []
@@ -1010,7 +1452,9 @@ def dedupe_records(records):
             99
         )
 
-        cleaned.append(record)
+        cleaned.append(
+            record
+        )
 
     cleaned.sort(
         key=lambda x: x.get(
@@ -1019,20 +1463,6 @@ def dedupe_records(records):
         )
     )
 
-    def norm(value):
-
-        value = clean_text(
-            value
-        ).lower()
-
-        value = re.sub(
-            r"\s+",
-            " ",
-            value
-        )
-
-        return value.strip()
-
     result = []
 
     seen_codes = set()
@@ -1040,6 +1470,11 @@ def dedupe_records(records):
     seen_coordinates = set()
     seen_name_address = set()
     seen_addresses = set()
+
+    def norm(value):
+        return normalize_for_compare(
+            value
+        )
 
     for record in cleaned:
 
@@ -1073,7 +1508,10 @@ def dedupe_records(records):
 
         duplicate = False
 
+        # ----------------------------------------------------
         # Store code
+        # ----------------------------------------------------
+
         if code:
 
             key = (
@@ -1084,7 +1522,10 @@ def dedupe_records(records):
             if key in seen_codes:
                 duplicate = True
 
+        # ----------------------------------------------------
         # Phone
+        # ----------------------------------------------------
+
         if (
             not duplicate
             and phone
@@ -1098,7 +1539,10 @@ def dedupe_records(records):
             if key in seen_phones:
                 duplicate = True
 
+        # ----------------------------------------------------
         # Coordinates
+        # ----------------------------------------------------
+
         if (
             not duplicate
             and lat
@@ -1114,7 +1558,10 @@ def dedupe_records(records):
             if key in seen_coordinates:
                 duplicate = True
 
-        # Name + Address
+        # ----------------------------------------------------
+        # Name + address
+        # ----------------------------------------------------
+
         if (
             not duplicate
             and name
@@ -1130,7 +1577,10 @@ def dedupe_records(records):
             if key in seen_name_address:
                 duplicate = True
 
+        # ----------------------------------------------------
         # Address
+        # ----------------------------------------------------
+
         if (
             not duplicate
             and address
@@ -1147,8 +1597,11 @@ def dedupe_records(records):
         if duplicate:
             continue
 
-        if code:
+        # ----------------------------------------------------
+        # Save keys
+        # ----------------------------------------------------
 
+        if code:
             seen_codes.add(
                 (
                     brand,
@@ -1157,7 +1610,6 @@ def dedupe_records(records):
             )
 
         if phone:
-
             seen_phones.add(
                 (
                     brand,
@@ -1166,7 +1618,6 @@ def dedupe_records(records):
             )
 
         if lat and lon:
-
             seen_coordinates.add(
                 (
                     brand,
@@ -1176,7 +1627,6 @@ def dedupe_records(records):
             )
 
         if name and address:
-
             seen_name_address.add(
                 (
                     brand,
@@ -1186,7 +1636,6 @@ def dedupe_records(records):
             )
 
         if address:
-
             seen_addresses.add(
                 (
                     brand,
@@ -1194,7 +1643,9 @@ def dedupe_records(records):
                 )
             )
 
-        result.append(record)
+        result.append(
+            record
+        )
 
     for record in result:
 
@@ -1207,13 +1658,89 @@ def dedupe_records(records):
 
 
 # ============================================================
+# PIZZA HUT URL EXPANSION
+# ============================================================
+
+def get_pizza_hut_urls(start_url):
+    """
+    If user enters any Pizza Hut store-location URL,
+    automatically generate:
+
+        north
+        central
+        south
+
+    If URL is not store-location, keep original URL only.
+    """
+
+    parsed = urlparse(
+        start_url
+    )
+
+    hostname = (
+        parsed.netloc
+        .lower()
+        .replace("www.", "")
+    )
+
+    path = parsed.path.lower()
+
+    if (
+        hostname != "pizzahut.vn"
+        or "store-location" not in path
+    ):
+        return [
+            start_url
+        ]
+
+    urls = []
+
+    for area in [
+        "north",
+        "central",
+        "south",
+    ]:
+
+        query = parse_qs(
+            parsed.query
+        )
+
+        query["area"] = [
+            area
+        ]
+
+        new_query = urlencode(
+            query,
+            doseq=True
+        )
+
+        new_url = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment,
+            )
+        )
+
+        urls.append(
+            new_url
+        )
+
+    return urls
+
+
+# ============================================================
 # PLAYWRIGHT CRAWLER
 #
 # EXTRACTION PRIORITY:
 #
 # 1. API / JSON
 # 2. HTML TABLE
-# 3. HTML CARD
+# 3. BRAND-SPECIFIC HTML
+# 4. HTML CARD
 #
 # IMPORTANT:
 # If API/JSON finds stores on a page,
@@ -1229,14 +1756,26 @@ async def crawl_website(
         start_url
     )
 
+    # --------------------------------------------------------
+    # Pizza Hut special:
+    # automatically generate 3 regional pages.
+    # --------------------------------------------------------
+
+    initial_urls = get_pizza_hut_urls(
+        start_url
+    )
+
     visited = set()
 
-    queue = [
-        start_url
-    ]
+    queue = list(
+        initial_urls
+    )
 
     all_records = []
+
     crawled_pages = []
+
+    debug_logs = []
 
     async with async_playwright() as p:
 
@@ -1252,7 +1791,7 @@ async def crawl_website(
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/130 Safari/537.36"
-            )
+            ),
         )
 
         page = await context.new_page()
@@ -1359,32 +1898,70 @@ async def crawl_website(
             ):
                 continue
 
-            visited.add(url)
+            visited.add(
+                url
+            )
 
-            # Reset API results for this page
+            # Reset API results
             current_page_api_records.clear()
+
+            debug_logs.append(
+                f"OPEN: {url}"
+            )
+
+            # ------------------------------------------------
+            # Navigate
+            # ------------------------------------------------
+
+            navigation_success = False
 
             try:
 
-                await page.goto(
+                response = await page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=45000
                 )
 
-            except Exception:
+                navigation_success = True
+
+                if response:
+
+                    debug_logs.append(
+                        f"HTTP {response.status}: {url}"
+                    )
+
+            except Exception as first_error:
+
+                debug_logs.append(
+                    f"goto domcontentloaded failed: {first_error}"
+                )
 
                 try:
 
-                    await page.goto(
+                    response = await page.goto(
                         url,
                         wait_until="commit",
                         timeout=30000
                     )
 
-                except Exception:
+                    navigation_success = True
 
-                    continue
+                    if response:
+
+                        debug_logs.append(
+                            f"HTTP {response.status}: {url}"
+                        )
+
+                except Exception as second_error:
+
+                    debug_logs.append(
+                        f"goto commit failed: {second_error}"
+                    )
+
+            if not navigation_success:
+
+                continue
 
             # ------------------------------------------------
             # Wait for JS / API
@@ -1398,7 +1975,7 @@ async def crawl_website(
             # Scroll
             # ------------------------------------------------
 
-            for _ in range(10):
+            for _ in range(8):
 
                 try:
 
@@ -1417,8 +1994,6 @@ async def crawl_website(
 
             # ------------------------------------------------
             # Click Store / Location buttons
-            #
-            # This may trigger API calls.
             # ------------------------------------------------
 
             try:
@@ -1451,7 +2026,7 @@ async def crawl_website(
                             )
 
                             await page.wait_for_timeout(
-                                1200
+                                1000
                             )
 
                     except Exception:
@@ -1488,26 +2063,33 @@ async def crawl_website(
                     url
                 )
 
+                debug_logs.append(
+                    f"API/JSON → {len(page_records)} stores"
+                )
+
                 # IMPORTANT:
-                # Since API worked, DO NOT parse
-                # HTML Table or HTML Card.
                 #
-                # We still discover links below.
+                # DO NOT parse HTML Table
+                # DO NOT parse Brand HTML
+                # DO NOT parse HTML Card
                 #
-                # This prevents Jollibee from getting
-                # API + HTML duplicates.
-                #
+                # because API already worked.
+
             else:
 
                 # =============================================
-                # Parse rendered HTML
+                # Get rendered HTML
                 # =============================================
 
                 try:
 
                     html = await page.content()
 
-                except Exception:
+                except Exception as error:
+
+                    debug_logs.append(
+                        f"page.content failed: {error}"
+                    )
 
                     continue
 
@@ -1534,21 +2116,55 @@ async def crawl_website(
                         table_records
                     )
 
+                    debug_logs.append(
+                        f"HTML Table → {len(table_records)} stores"
+                    )
+
                 else:
 
                     # =========================================
-                    # PRIORITY 3: HTML CARD
+                    # PRIORITY 3: BRAND-SPECIFIC
                     # =========================================
 
-                    card_records = parse_store_cards(
-                        soup,
-                        brand,
-                        url
-                    )
+                    if brand == "PIZZA HUT":
 
-                    page_records.extend(
-                        card_records
-                    )
+                        brand_records = parse_pizza_hut(
+                            soup,
+                            brand,
+                            url
+                        )
+
+                        if brand_records:
+
+                            page_records.extend(
+                                brand_records
+                            )
+
+                            debug_logs.append(
+                                f"Pizza Hut HTML → {len(brand_records)} stores"
+                            )
+
+                    # =========================================
+                    # PRIORITY 4: GENERIC HTML CARD
+                    # =========================================
+
+                    if not page_records:
+
+                        card_records = parse_store_cards(
+                            soup,
+                            brand,
+                            url
+                        )
+
+                        if card_records:
+
+                            page_records.extend(
+                                card_records
+                            )
+
+                            debug_logs.append(
+                                f"HTML Card → {len(card_records)} stores"
+                            )
 
                 page_records = dedupe_records(
                     page_records
@@ -1561,6 +2177,12 @@ async def crawl_website(
                 crawled_pages.append(
                     url
                 )
+
+                if not page_records:
+
+                    debug_logs.append(
+                        f"NO STORE FOUND → {url}"
+                    )
 
             # =================================================
             # DISCOVER INTERNAL STORE LINKS
@@ -1597,11 +2219,8 @@ async def crawl_website(
                     )
                 ).lower()
 
-                if not href.startswith(
-                    (
-                        "http://",
-                        "https://"
-                    )
+                if not looks_like_http_url(
+                    href
                 ):
                     continue
 
@@ -1643,7 +2262,8 @@ async def crawl_website(
 
     return (
         final_records,
-        crawled_pages
+        crawled_pages,
+        debug_logs
     )
 
 
@@ -1679,7 +2299,7 @@ st.title(
 
 st.caption(
     "Website đối thủ → API / JSON → "
-    "HTML Table → HTML Card → Excel"
+    "HTML Table → Brand Parser → HTML Card → Excel"
 )
 
 
@@ -1707,23 +2327,45 @@ with st.sidebar:
 **1. API / JSON**
 
 Nếu API tìm được store:
+
 → Không lấy HTML.
 
 **2. HTML Table**
 
 Nếu không có API:
+
 → Lấy Table.
 
-**3. HTML Card**
+**3. Brand Parser**
 
-Nếu không có API và Table:
+Ví dụ Pizza Hut có parser riêng.
+
+**4. HTML Card**
+
+Nếu các phương thức trên không có:
+
 → Lấy Card.
 
 ### Address
 
-Province = phần cuối sau dấu `,`
+**Province**
+→ ưu tiên phần cuối có `Tỉnh / Thành phố / TP`
 
-Ward = phần ngay trước Province.
+**Ward**
+→ tìm phần có `Phường / P. / Ward / Xã`
+
+### Pizza Hut
+
+Nếu nhập:
+
+`store-location?area=north`
+
+tool tự crawl:
+
+- north
+- central
+- south
+
 """
     )
 
@@ -1768,8 +2410,11 @@ if st.button(
 
     all_data = []
     all_pages = []
+    all_debug_logs = []
 
-    progress = st.progress(0)
+    progress = st.progress(
+        0
+    )
 
     status = st.empty()
 
@@ -1782,13 +2427,17 @@ if st.button(
         start=1
     ):
 
+        brand = get_brand_from_url(
+            url
+        )
+
         status.write(
             f"🔎 Đang crawl: {url}"
         )
 
         try:
 
-            records, pages = extract_store_data(
+            records, pages, debug_logs = extract_store_data(
                 url,
                 max_pages
             )
@@ -1801,15 +2450,34 @@ if st.button(
                 pages
             )
 
-            st.success(
-                f"{get_brand_from_url(url)} "
-                f"→ {len(records):,} stores"
+            all_debug_logs.extend(
+                [
+                    f"[{brand}] {x}"
+                    for x in debug_logs
+                ]
             )
+
+            if records:
+
+                st.success(
+                    f"{brand} → "
+                    f"{len(records):,} stores"
+                )
+
+            else:
+
+                st.warning(
+                    f"{brand} → 0 stores"
+                )
 
         except Exception as e:
 
             st.error(
                 f"{url} → lỗi: {e}"
+            )
+
+            all_debug_logs.append(
+                f"[{brand}] ERROR → {e}"
             )
 
         progress.progress(
@@ -1824,8 +2492,6 @@ if st.button(
         all_data
     )
 
-    # IMPORTANT:
-    # District removed.
     columns = [
         "Brand",
         "StoreCode",
@@ -1846,10 +2512,11 @@ if st.button(
         for column in columns:
 
             if column not in df.columns:
-
                 df[column] = ""
 
-        df = df[columns]
+        df = df[
+            columns
+        ]
 
         # ====================================================
         # FINAL SAFETY DEDUPE
@@ -1858,7 +2525,8 @@ if st.button(
         method_order = {
             "API/JSON": 1,
             "HTML Table": 2,
-            "HTML Card": 3,
+            "Pizza Hut HTML": 3,
+            "HTML Card": 4,
         }
 
         df["_Priority"] = (
@@ -1870,36 +2538,39 @@ if st.button(
         df["_PhoneKey"] = (
             df["Phone"]
             .fillna("")
-            .apply(normalize_phone)
+            .apply(
+                normalize_phone
+            )
         )
 
         df["_LatKey"] = (
             df["Lat"]
             .fillna("")
-            .apply(normalize_coordinate)
+            .apply(
+                normalize_coordinate
+            )
         )
 
         df["_LongKey"] = (
             df["Long"]
             .fillna("")
-            .apply(normalize_coordinate)
+            .apply(
+                normalize_coordinate
+            )
         )
 
         df["_AddressKey"] = (
             df["Brand"]
             .fillna("")
-            .str.lower()
-            .str.strip()
+            .apply(
+                normalize_for_compare
+            )
             + "|"
             + df["Address"]
             .fillna("")
-            .str.lower()
-            .str.replace(
-                r"\s+",
-                " ",
-                regex=True
+            .apply(
+                normalize_for_compare
             )
-            .str.strip()
         )
 
         df = df.sort_values(
@@ -1923,7 +2594,7 @@ if st.button(
             df.duplicated(
                 subset=[
                     "Brand",
-                    "StoreCode"
+                    "StoreCode",
                 ],
                 keep="first"
             )
@@ -1947,7 +2618,7 @@ if st.button(
             df.duplicated(
                 subset=[
                     "Brand",
-                    "_PhoneKey"
+                    "_PhoneKey",
                 ],
                 keep="first"
             )
@@ -1974,7 +2645,7 @@ if st.button(
                 subset=[
                     "Brand",
                     "_LatKey",
-                    "_LongKey"
+                    "_LongKey",
                 ],
                 keep="first"
             )
@@ -1991,7 +2662,7 @@ if st.button(
         duplicate_address = (
             df.duplicated(
                 subset=[
-                    "_AddressKey"
+                    "_AddressKey",
                 ],
                 keep="first"
             )
@@ -2045,10 +2716,11 @@ Website có thể dùng:
 - GraphQL
 - Google Maps
 - dữ liệu cần chọn tỉnh/thành
-- hoặc anti-bot.
+- anti-bot
+- hoặc cấu trúc HTML đặc biệt.
 
-Khi gặp trường hợp này, bước tiếp theo
-là viết Adapter riêng cho website đó.
+Xem phần **Debug / Crawl log** bên dưới để biết crawler
+đã mở page nào và thử phương thức nào.
 """
         )
 
@@ -2079,6 +2751,32 @@ là viết Adapter riêng cho website đó.
 
         st.dataframe(
             summary,
+            use_container_width=True
+        )
+
+        # ====================================================
+        # METHOD SUMMARY
+        # ====================================================
+
+        method_summary = (
+            df.groupby(
+                [
+                    "Brand",
+                    "Method",
+                ]
+            )
+            .size()
+            .reset_index(
+                name="StoreCount"
+            )
+        )
+
+        st.subheader(
+            "Extraction Method"
+        )
+
+        st.dataframe(
+            method_summary,
             use_container_width=True
         )
 
@@ -2131,6 +2829,12 @@ là viết Adapter riêng cho website đó.
                 writer,
                 index=False,
                 sheet_name="Summary"
+            )
+
+            method_summary.to_excel(
+                writer,
+                index=False,
+                sheet_name="Methods"
             )
 
             pd.DataFrame(
@@ -2187,4 +2891,26 @@ là viết Adapter riêng cho website đó.
                 sorted(
                     set(all_pages)
                 )
+            )
+
+    # ========================================================
+    # DEBUG
+    # ========================================================
+
+    with st.expander(
+        "🛠️ Debug / Crawl log"
+    ):
+
+        if all_debug_logs:
+
+            for log in all_debug_logs:
+
+                st.text(
+                    log
+                )
+
+        else:
+
+            st.write(
+                "Không có debug log."
             )
