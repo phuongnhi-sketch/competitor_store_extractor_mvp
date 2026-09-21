@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Streamlit cache
+.streamlit/cache/
+
+# Test / debug output
+*_test_output/
+kfc_test_output/
+kfc_debug/
+kfc_debug_search/
+debug_output/
+test_output/
+raw_api/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
