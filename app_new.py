@@ -796,9 +796,22 @@ max_pages = st.number_input(
 # This is the key fix for the previous bug.
 # ============================================================
 
+RETAIL_BRANDS = {
+    "THE GIOI DI DONG",
+    "DIEN MAY XANH",
+    "FPT SHOP",
+    "NHA THUOC LONG CHAU",
+    "PHARMACITY",
+    "BACH HOA XANH",
+}
+
 use_kfc_dedicated_crawler = (
     selected_brand == "KFC"
     and source_type == "Configured website"
+)
+
+use_retail_dedicated_crawler = (
+    selected_brand in RETAIL_BRANDS
 )
 
 
@@ -970,20 +983,49 @@ if run_button:
                 logs = []
 
             # =================================================
-            # GENERIC MODE
+            # RETAIL / GENERIC MODE
             # =================================================
             #
-            # This covers:
+            # The six dedicated retail brands MUST go through
+            # extract_store_data(), which dispatches to their
+            # dedicated crawler in brands/retail.py.
             #
-            # - KFC + Custom URL
-            # - Other Brand + Configured website
-            # - Other Brand + Custom URL
-            # - Custom / Other + Custom URL
-            #
-            # Most importantly:
-            #
-            # KFC + Custom URL will NOT call crawl_kfc().
+            # KFC configured website keeps its dedicated flow.
+            # Everything else keeps the generic crawler.
             # =================================================
+
+            elif use_retail_dedicated_crawler:
+
+                debug_lines.append(
+                    "Crawler mode: "
+                    "Dedicated retail crawler"
+                )
+
+                debug_lines.append(
+                    f"Retail brand: {selected_brand}"
+                )
+
+                debug_lines.append(
+                    f"Retail crawler URL: {url}"
+                )
+
+                result = extract_store_data(
+                    url,
+                    max_pages=int(max_pages),
+                )
+
+                if (
+                    isinstance(result, tuple)
+                    and len(result) == 3
+                ):
+
+                    records, pages, logs = result
+
+                else:
+
+                    records = result
+                    pages = []
+                    logs = []
 
             else:
 
