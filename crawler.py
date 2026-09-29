@@ -1928,7 +1928,15 @@ def extract_store_data(
                 f"Retail crawler not found: {crawler_name}"
             )
 
-        result = crawler_func()
+        # Pass the URL selected/found by the user into the
+        # dedicated retail crawler. Each retail crawler keeps
+        # its own default URL when start_url is omitted.
+        try:
+            result = crawler_func(start_url=url)
+        except TypeError:
+            # Backward compatibility for a crawler that still
+            # exposes the old no-argument signature.
+            result = crawler_func()
 
         if inspect.isawaitable(result):
             result = asyncio.run(result)
