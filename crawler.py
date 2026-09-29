@@ -103,6 +103,19 @@ def get_brand_from_url(url):
 
         "galaxypremium.com.vn": "GALAXY",
 
+        # Dedicated retail brands
+        "thegioididong.com": "THE GIOI DI DONG",
+
+        "dienmayxanh.com": "DIEN MAY XANH",
+
+        "fptshop.com.vn": "FPT SHOP",
+
+        "nhathuoclongchau.com.vn": "NHA THUOC LONG CHAU",
+
+        "pharmacity.vn": "PHARMACITY",
+
+        "bachhoaxanh.com": "BACH HOA XANH",
+
     }
 
     if hostname in known_brands:
