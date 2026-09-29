@@ -51,9 +51,14 @@ def clean_text(value):
 def normalize_text(value):
     """
     Lowercase + remove Vietnamese accents.
+
+    Vietnamese "đ/Đ" does not decompose under Unicode NFD,
+    so it is normalized explicitly as well.
     """
 
     value = clean_text(value)
+
+    value = value.replace("đ", "d").replace("Đ", "D")
 
     value = unicodedata.normalize(
         "NFD",
@@ -905,14 +910,20 @@ def extract_mwg_address_from_store_line(
 ):
     """
     Extract the address from one MWG store-card line.
+
+    Example:
+        Điện máy Xanh 137 Quốc Lộ 13, Phường Hiệp Bình,
+        Thành phố Hồ Chí Minh, Việt Nam - Xem bản đồ
+
+    Returns only the address portion.
     """
 
     value = clean_text(line)
 
     if detected_brand == "DIEN MAY XANH":
-        brand_regex = r"^dien\s*may\s*xanh\b"
+        brand_regex = r"^\s*Điện\s+máy\s+Xanh\b"
     else:
-        brand_regex = r"^the\s*gioi\s*di\s*dong\b"
+        brand_regex = r"^\s*Thế\s+giới\s+di\s+động\b"
 
     value = re.sub(
         brand_regex,
@@ -922,26 +933,23 @@ def extract_mwg_address_from_store_line(
         flags=re.I,
     ).strip(" -:|")
 
+    # Remove the map UI suffix.
     value = re.sub(
-        r"\s*-?\s*ngay\s*\d{1,2}/\d{1,2}\s*-?\s*xem\s*ban\s*do.*$",
+        r"\s*-\s*Xem\s+bản\s+đồ.*$",
         "",
         value,
-        flags=re.I,
-    ).strip(" -:|")
-
-    value = re.sub(
-        r"\s*-?\s*xem\s*ban\s*do.*$",
-        "",
-        value,
+        count=1,
         flags=re.I,
     ).strip(" -:|")
 
     if not value:
         return ""
 
-    normalized_value = normalize_text(
-        value
-    )
+    if len(value) > 500:
+        return ""
+
+    normalized_value = normalize_text(value)
+    padded = f" {normalized_value} "
 
     address_markers = [
         " duong ",
@@ -957,15 +965,10 @@ def extract_mwg_address_from_store_line(
         " km ",
     ]
 
-    padded = f" {normalized_value} "
-
     if not any(
         marker in padded
         for marker in address_markers
     ):
-        return ""
-
-    if len(value) > 500:
         return ""
 
     return value
