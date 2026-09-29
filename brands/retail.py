@@ -972,11 +972,12 @@ def parse_mwg_locator_text(
     return records
 
 
-async def crawl_thegioididong():
+async def crawl_thegioididong(start_url=None):
     return await _crawl_mwg_brand(
         brand="THE GIOI DI DONG",
         start_url=(
-            "https://www.thegioididong.com/"
+            start_url
+            or "https://www.thegioididong.com/"
             "he-thong-sieu-thi-the-gioi-di-dong/"
         ),
         brand_keywords=[
@@ -990,11 +991,12 @@ async def crawl_thegioididong():
     )
 
 
-async def crawl_dienmayxanh():
+async def crawl_dienmayxanh(start_url=None):
     return await _crawl_mwg_brand(
         brand="DIEN MAY XANH",
         start_url=(
-            "https://www.dienmayxanh.com/"
+            start_url
+            or "https://www.dienmayxanh.com/"
             "he-thong-sieu-thi-dien-may"
         ),
         brand_keywords=[
@@ -1012,7 +1014,7 @@ async def crawl_dienmayxanh():
 # FPT SHOP
 # ============================================================
 
-async def crawl_fptshop():
+async def crawl_fptshop(start_url=None):
     """
     Crawl FPT Shop store locator.
 
@@ -1021,7 +1023,8 @@ async def crawl_fptshop():
     """
 
     start_url = (
-        "https://fptshop.com.vn/cua-hang"
+        start_url
+        or "https://fptshop.com.vn/cua-hang"
     )
 
     records = []
@@ -1363,7 +1366,7 @@ def parse_fpt_locator_text(
 # LONG CHÂU
 # ============================================================
 
-async def crawl_longchau():
+async def crawl_longchau(start_url=None):
     """
     Crawl Long Châu store system.
 
@@ -1375,7 +1378,8 @@ async def crawl_longchau():
     """
 
     start_url = (
-        "https://nhathuoclongchau.com.vn/"
+        start_url
+        or "https://nhathuoclongchau.com.vn/"
         "he-thong-cua-hang"
     )
 
@@ -1667,7 +1671,7 @@ def parse_longchau_text(
 # PHARMACITY
 # ============================================================
 
-async def crawl_pharmacity():
+async def crawl_pharmacity(start_url=None):
     """
     Pharmacity store locator parser.
 
@@ -1675,7 +1679,8 @@ async def crawl_pharmacity():
     """
 
     start_url = (
-        "https://www.pharmacity.vn/"
+        start_url
+        or "https://www.pharmacity.vn/"
         "he-thong-cua-hang"
     )
 
@@ -1927,7 +1932,7 @@ def parse_pharmacity_text(
 # BÁCH HÓA XANH
 # ============================================================
 
-async def crawl_bachhoaxanh():
+async def crawl_bachhoaxanh(start_url=None):
     """
     Bách Hóa Xanh store locator.
 
@@ -1935,10 +1940,15 @@ async def crawl_bachhoaxanh():
     by the site.
     """
 
-    start_urls = [
+    start_urls = []
+
+    if start_url:
+        start_urls.append(start_url)
+
+    start_urls.extend([
         "https://www.bachhoaxanh.com/he-thong-sieu-thi",
         "https://www.bachhoaxanh.com/",
-    ]
+    ])
 
     records = []
     pages = []
