@@ -391,10 +391,9 @@ async def get_body_text(page):
     """
     Read body text while preserving line boundaries.
 
-    MWG's locator pages expose store cards as separate text
-    lines. The old implementation collapsed the whole page into
-    one giant line, which made the parser mistake the entire page
-    for one store.
+    MWG locator pages expose store cards as separate text
+    lines. Keeping line boundaries prevents the parser from
+    treating the whole page as one store.
     """
     try:
         raw = await page.locator("body").inner_text()
@@ -411,7 +410,6 @@ async def get_body_text(page):
 
     except Exception:
         return ""
-
 
 async def safe_goto(
     page,
@@ -526,9 +524,13 @@ def looks_like_store_url(
     url,
     keywords,
 ):
-    path = normalize_text(urlparse(url).path)
+    path = normalize_text(
+        urlparse(url).path
+    )
+
     return any(
-        normalize_text(keyword) in path
+        normalize_text(keyword)
+        in path
         for keyword in keywords
     )
 
@@ -536,7 +538,6 @@ def looks_like_store_url(
 # ============================================================
 # THẾ GIỚI DI ĐỘNG + ĐIỆN MÁY XANH
 # ============================================================
-
 
 async def _crawl_mwg_brand(
     brand,
@@ -547,22 +548,9 @@ async def _crawl_mwg_brand(
     """
     Crawl MWG locator pages through the site's geographic hierarchy.
 
-    Important:
-    The links on the main locator are NOT individual store detail
-    pages. They are province/city/ward locator pages. The previous
-    crawler opened those links as if they were store pages and then
-    parsed the whole locator page as one store.
-
-    This version:
-      1. opens the selected locator URL;
-      2. discovers geographic locator links;
-      3. visits each geographic page;
-      4. parses the individual store lines shown on those pages;
-      5. keeps only the requested MWG brand.
-
-    A page such as:
-        Điện máy Xanh 137 Quốc Lộ 13, Phường Hiệp Bình, ...
-    is treated as one store record.
+    The MWG locator links are geographic pages rather than
+    individual store detail pages. We therefore parse the store
+    cards directly from the locator-page text.
     """
 
     records = []
@@ -594,12 +582,15 @@ async def _crawl_mwg_brand(
         pages.append(opened_url)
         logs.append(f"Opened: {opened_url}")
 
-        await click_load_more(page, max_clicks=50)
+        await click_load_more(
+            page,
+            max_clicks=50,
+        )
 
-        # ----------------------------------------------------
-        # Discover geographic locator pages.
-        # ----------------------------------------------------
-        links = await get_page_links(page, page.url)
+        links = await get_page_links(
+            page,
+            page.url,
+        )
 
         locator_links = []
 
@@ -613,27 +604,22 @@ async def _crawl_mwg_brand(
             if not href:
                 continue
 
-            if not is_same_domain(opened_url, href):
+            if not is_same_domain(
+                opened_url,
+                href,
+            ):
                 continue
 
             path = normalize_text(
                 urlparse(href).path
             ).rstrip("/")
 
-            # Must stay inside the MWG locator hierarchy.
             if not path.startswith(main_path):
                 continue
 
-            # Do not treat the main locator itself or query/hash
-            # variants of it as store pages.
             if path == main_path:
                 continue
 
-            # Geographic pages are the useful links here.
-            # They look like:
-            # /he-thong-sieu-thi-dien-may/tinh-xxx
-            # /he-thong-sieu-thi-dien-may/thanh-pho-xxx
-            # /he-thong-sieu-thi-dien-may/.../phuong-xxx
             if (
                 "/tinh-" not in path
                 and "/thanh-pho-" not in path
@@ -644,26 +630,33 @@ async def _crawl_mwg_brand(
 
             locator_links.append(item)
 
-        locator_links = unique_store_links(locator_links)
+        locator_links = unique_store_links(
+            locator_links
+        )
 
         logs.append(
             f"Discovered geographic locator links: "
             f"{len(locator_links)}"
         )
 
-        # The main page itself contains a small set of stores.
-        # Parse it too, then parse every geographic page.
-        pages_to_visit = [{"href": opened_url, "text": ""}]
-        pages_to_visit.extend(locator_links)
+        pages_to_visit = [
+            {
+                "href": opened_url,
+                "text": "",
+            }
+        ]
+
+        pages_to_visit.extend(
+            locator_links
+        )
 
         visited = set()
 
         for item in pages_to_visit:
             location_url = item["href"]
 
-            # Normalize away fragments/query strings for page-level
-            # dedupe. The geographic path is what identifies the page.
             parsed = urlparse(location_url)
+
             visit_key = (
                 parsed.scheme.lower(),
                 parsed.netloc.lower(),
@@ -696,14 +689,18 @@ async def _crawl_mwg_brand(
                         )
                         continue
 
-                    pages.append(location_page.url)
+                    pages.append(
+                        location_page.url
+                    )
 
                 await click_load_more(
                     location_page,
                     max_clicks=30,
                 )
 
-                text = await get_body_text(location_page)
+                text = await get_body_text(
+                    location_page
+                )
 
                 location_records = parse_mwg_locator_text(
                     text,
@@ -711,7 +708,9 @@ async def _crawl_mwg_brand(
                     brand,
                 )
 
-                records.extend(location_records)
+                records.extend(
+                    location_records
+                )
 
             except Exception as e:
                 logs.append(
@@ -726,7 +725,9 @@ async def _crawl_mwg_brand(
 
         await browser.close()
 
-    records = dedupe_records_local(records)
+    records = dedupe_records_local(
+        records
+    )
 
     logs.append(
         f"Parsed MWG store records before app dedupe: "
@@ -787,6 +788,7 @@ def extract_store_name_from_text(
 
     return ""
 
+
 def parse_mwg_locator_text(
     body_text,
     source_url,
@@ -799,9 +801,8 @@ def parse_mwg_locator_text(
         Điện máy Xanh 137 Quốc Lộ 13, Phường Hiệp Bình, ...
         Thế giới di động 708 Nguyễn Trãi, Phường Chợ Lớn, ...
 
-    We only accept a line when the requested brand is present and
-    the line contains address-like information. This deliberately
-    avoids turning navigation/header/footer text into a store.
+    Only lines containing the requested brand and address-like
+    information are accepted.
     """
 
     records = []
@@ -821,13 +822,11 @@ def parse_mwg_locator_text(
             "DIEN MAY XANH",
             [
                 "dien may xanh",
-                "dien may Xanh",
             ],
         ),
         (
             "THE GIOI DI DONG",
             [
-                "the gioi di dong",
                 "the gioi di dong",
             ],
         ),
@@ -849,15 +848,12 @@ def parse_mwg_locator_text(
         if not detected_brand:
             continue
 
-        # The selected crawler must only return the requested chain.
         if (
             normalize_text(detected_brand)
             != requested_normalized
         ):
             continue
 
-        # Ignore UI/navigation/footer lines that happen to mention
-        # the brand.
         if any(
             phrase in normalized
             for phrase in [
@@ -873,7 +869,6 @@ def parse_mwg_locator_text(
         ):
             continue
 
-        # A real store card has address-like information.
         address = extract_mwg_address_from_store_line(
             line,
             detected_brand,
@@ -882,7 +877,6 @@ def parse_mwg_locator_text(
         if not address:
             continue
 
-        # Remove the leading brand from StoreName.
         store_name = (
             "Điện máy Xanh"
             if detected_brand == "DIEN MAY XANH"
@@ -910,20 +904,10 @@ def extract_mwg_address_from_store_line(
     detected_brand,
 ):
     """
-    Extract the current address from a single MWG store-card line.
-
-    The current website appends:
-        - Xem bản đồ
-    and may append:
-        Ngày DD/MM
-    before the map link.
-
-    We remove those UI fragments before validating the address.
+    Extract the address from one MWG store-card line.
     """
 
     value = clean_text(line)
-
-    normalized = normalize_text(value)
 
     if detected_brand == "DIEN MAY XANH":
         brand_regex = r"^dien\s*may\s*xanh\b"
@@ -955,12 +939,12 @@ def extract_mwg_address_from_store_line(
     if not value:
         return ""
 
-    normalized_value = normalize_text(value)
+    normalized_value = normalize_text(
+        value
+    )
 
-    # Strong signal that this is an address rather than a UI label.
     address_markers = [
         " duong ",
-        " duong",
         " phuong ",
         " xa ",
         " tinh ",
@@ -973,18 +957,151 @@ def extract_mwg_address_from_store_line(
         " km ",
     ]
 
+    padded = f" {normalized_value} "
+
     if not any(
-        marker in f" {normalized_value} "
+        marker in padded
         for marker in address_markers
     ):
         return ""
 
-    # Avoid accidentally capturing very long page/UI text.
     if len(value) > 500:
         return ""
 
     return value
 
+async def crawl_thegioididong(start_url=None):
+    return await _crawl_mwg_brand(
+        brand="THE GIOI DI DONG",
+        start_url=(
+            start_url
+            or "https://www.thegioididong.com/"
+            "he-thong-sieu-thi-the-gioi-di-dong/"
+        ),
+        brand_keywords=[
+            "Thế giới di động",
+            "thegioididong",
+        ],
+        store_url_keywords=[
+            "sieu-thi-the-gioi-di-dong",
+            "cua-hang-the-gioi-di-dong",
+        ],
+    )
+
+
+async def crawl_dienmayxanh(start_url=None):
+    return await _crawl_mwg_brand(
+        brand="DIEN MAY XANH",
+        start_url=(
+            start_url
+            or "https://www.dienmayxanh.com/"
+            "he-thong-sieu-thi-dien-may"
+        ),
+        brand_keywords=[
+            "Điện máy Xanh",
+            "dien may xanh",
+        ],
+        store_url_keywords=[
+            "he-thong-sieu-thi-dien-may",
+            "sieu-thi-dien-may",
+        ],
+    )
+
+
+# ============================================================
+# FPT SHOP
+# ============================================================
+
+async def crawl_fptshop(start_url=None):
+    """
+    Crawl FPT Shop store locator.
+
+    FPT currently exposes a nationwide store system and
+    province-level / store-level pages.
+    """
+
+    start_url = (
+        start_url
+        or "https://fptshop.com.vn/cua-hang"
+    )
+
+    records = []
+    pages = []
+    logs = []
+
+    async with async_playwright() as p:
+
+        browser = await p.chromium.launch(
+            headless=True
+        )
+
+        context = await browser.new_context(
+            viewport={
+                "width": 1440,
+                "height": 1000,
+            },
+            locale="vi-VN",
+        )
+
+        page = await context.new_page()
+
+        ok = await safe_goto(
+            page,
+            start_url,
+            wait_ms=3000,
+        )
+
+        if not ok:
+
+            logs.append(
+                f"Failed to open: {start_url}"
+            )
+
+            await browser.close()
+
+            return records, pages, logs
+
+        pages.append(
+            page.url
+        )
+
+        logs.append(
+            f"Opened: {page.url}"
+        )
+
+        await click_load_more(
+            page,
+            max_clicks=50,
+        )
+
+        links = await get_page_links(
+            page,
+            page.url,
+        )
+
+        store_links = []
+
+        for item in links:
+
+            href = item["href"]
+
+            if not is_same_domain(
+                start_url,
+                href,
+            ):
+                continue
+
+            path = normalize_text(
+                urlparse(href).path
+            )
+
+            # FPT store detail pages normally contain
+            # /cua-hang/
+            if (
+                "/cua-hang/"
+                not in path
+            ):
+                continue
 
             # Exclude the locator root itself
             if path.rstrip(
@@ -2210,9 +2327,8 @@ def unique_store_links(
     """
     Deduplicate URLs by canonical path.
 
-    Query strings and fragments on MWG locator links often point to
-    the same geographic page. Keeping those variants created fake
-    duplicate "store links".
+    Query strings and fragments often point to the same
+    geographic locator page.
     """
 
     result = []
