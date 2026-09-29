@@ -787,72 +787,7 @@ def extract_store_name_from_text(
 
     return ""
 
-
-def parse_mwg_locator_text(
-    body_text,
-    source_url,
-    requested_brand,
-):
-    """
-    Fallback parser for locator pages where store detail
-    links are not exposed.
-
-    The MWG locator text generally follows:
-
-        Brand + store name + address
-        Old address
-        Brand + next store...
-    """
-
-    records = []
-
-    lines = [
-        clean_text(x)
-        for x in body_text.splitlines()
-    ]
-
-    lines = [
-        x for x in lines
-        if x
-    ]
-
-    current_brand = ""
-    current_name = ""
-    current_address = ""
-
-    for line in lines:
-
-        normalized = normalize_text(
-            line
-        )
-
-        # ----------------------------------------------
-        # Brand marker
-        # ----------------------------------------------
-
-        if "dien may xanh" in normalized:
-
-            current_brand = (
-                "DIEN MAY XANH"
-            )
-
-            current_name = line
-            current_address = ""
-
-            continue
-
-        if "the gioi di dong" in normalized:
-
-            current_brand = (
-                "THE GIOI DI DONG"
-            )
-
-            current_name = line
-            current_address = ""
-
-            continue
-
-        # ----------------------------def parse_mwg_locator_text(
+--def parse_mwg_locator_text(
     body_text,
     source_url,
     requested_brand,
