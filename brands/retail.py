@@ -519,7 +519,26 @@ def is_same_domain(
         )
 
     except Exception:
-  async def _crawl_mwg_brand(
+        return False
+
+
+def looks_like_store_url(
+    url,
+    keywords,
+):
+    path = normalize_text(urlparse(url).path)
+    return any(
+        normalize_text(keyword) in path
+        for keyword in keywords
+    )
+
+
+# ============================================================
+# THẾ GIỚI DI ĐỘNG + ĐIỆN MÁY XANH
+# ============================================================
+
+
+async def _crawl_mwg_brand(
     brand,
     start_url,
     brand_keywords,
