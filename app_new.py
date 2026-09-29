@@ -161,40 +161,69 @@ BRAND_CONFIG = load_brand_config()
 
 
 # ============================================================
-# FALLBACK BRAND CONFIG
+# BUILT-IN BRAND CONFIG
+# ============================================================
+# Keep any existing common.py configuration, but always make
+# the dedicated retail brands available in the UI.
 # ============================================================
 
-if not BRAND_CONFIG:
+BUILTIN_BRAND_CONFIG = {
+    "JOLLIBEE": "https://jollibee.com.vn/cua-hang/",
+    "PHUC LONG": "https://www.phuclong.com.vn/",
+    "HIGHLANDS COFFEE": (
+        "https://order.highlandscoffee.com.vn/"
+        "he-thong-cua-han"
+    ),
+    "STARBUCKS": (
+        "https://www.starbucks.vn/"
+        "store-locator/"
+    ),
+    "KFC": (
+        "https://www.kfcvietnam.com.vn/"
+        "he-thong-nha-hang-kfc"
+    ),
+    "LOTTERIA": (
+        "https://www.lotteria.vn/"
+        "danh-sach-so-dien-thoai-cua-hang-LOTTERIA"
+    ),
+    "PIZZA 4P'S": (
+        "https://pizza4ps.com/vn/location/"
+    ),
+    "PIZZA HUT": (
+        "https://pizzahut.vn/store-location/"
+    ),
+    "DOMINO'S": (
+        "https://dominos.vn/store-locations/"
+    ),
 
-    BRAND_CONFIG = {
-        "JOLLIBEE": "https://jollibee.com.vn/cua-hang/",
-        "PHUC LONG": "https://www.phuclong.com.vn/",
-        "HIGHLANDS COFFEE": (
-            "https://order.highlandscoffee.com.vn/"
-            "he-thong-cua-han"
-        ),
-        "STARBUCKS": (
-            "https://www.starbucks.vn/"
-            "store-locator/"
-        ),
-        "KFC": (
-            "https://www.kfcvietnam.com.vn/"
-            "he-thong-nha-hang-kfc"
-        ),
-        "LOTTERIA": (
-            "https://www.lotteria.vn/"
-            "danh-sach-so-dien-thoai-cua-hang-LOTTERIA"
-        ),
-        "PIZZA 4P'S": (
-            "https://pizza4ps.com/vn/location/"
-        ),
-        "PIZZA HUT": (
-            "https://pizzahut.vn/store-location/"
-        ),
-        "DOMINO'S": (
-            "https://dominos.vn/store-locations/"
-        ),
-    }
+    # Dedicated retail crawlers
+    "THE GIOI DI DONG": (
+        "https://www.thegioididong.com/"
+        "he-thong-sieu-thi-the-gioi-di-dong/"
+    ),
+    "DIEN MAY XANH": (
+        "https://www.dienmayxanh.com/"
+        "he-thong-sieu-thi-dien-may"
+    ),
+    "FPT SHOP": (
+        "https://fptshop.com.vn/cua-hang"
+    ),
+    "NHA THUOC LONG CHAU": (
+        "https://nhathuoclongchau.com.vn/"
+        "he-thong-cua-hang"
+    ),
+    "PHARMACITY": (
+        "https://www.pharmacity.vn/"
+        "he-thong-cua-hang"
+    ),
+    "BACH HOA XANH": (
+        "https://www.bachhoaxanh.com/"
+        "he-thong-sieu-thi"
+    ),
+}
+
+for _brand, _url in BUILTIN_BRAND_CONFIG.items():
+    BRAND_CONFIG.setdefault(_brand, _url)
 
 
 BRANDS = sorted(
@@ -798,10 +827,24 @@ elif (
 
 elif source_type == "Custom URL":
 
-    st.caption(
-        "Custom URL always uses the generic crawler. "
-        "The selected Brand does not change the crawler."
-    )
+    retail_brand_names = {
+        "THE GIOI DI DONG",
+        "DIEN MAY XANH",
+        "FPT SHOP",
+        "NHA THUOC LONG CHAU",
+        "PHARMACITY",
+        "BACH HOA XANH",
+    }
+
+    if selected_brand in retail_brand_names:
+        st.info(
+            f"{selected_brand} uses its dedicated retail crawler. "
+            "The custom URL will be passed to that crawler."
+        )
+    else:
+        st.caption(
+            "Custom URL uses the generic crawler for this brand."
+        )
 
 else:
 
