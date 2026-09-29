@@ -1890,8 +1890,99 @@ def extract_store_data(
         )
 
     # ========================================================
+    # DEDICATED RETAIL CRAWLERS
+    # ========================================================
+    # These brands already have dedicated parsers in
+    # brands/retail.py. Do NOT send them through the generic
+    # crawler, because their store locators are JS-driven and
+    # often do not expose store data as normal HTML links/cards.
+
+    retail_crawlers = {
+        "THE GIOI DI DONG": "crawl_thegioididong",
+        "DIEN MAY XANH": "crawl_dienmayxanh",
+        "FPT SHOP": "crawl_fptshop",
+        "NHA THUOC LONG CHAU": "crawl_longchau",
+        "PHARMACITY": "crawl_pharmacity",
+        "BACH HOA XANH": "crawl_bachhoaxanh",
+    }
+
+    crawler_name = retail_crawlers.get(brand)
+
+    if crawler_name:
+
+        from brands import retail
+
+        print(
+            f"DEBUG RETAIL: brand={brand}, "
+            f"crawler={crawler_name}"
+        )
+
+        crawler_func = getattr(
+            retail,
+            crawler_name,
+            None,
+        )
+
+        if crawler_func is None:
+            raise AttributeError(
+                f"Retail crawler not found: {crawler_name}"
+            )
+
+        result = crawler_func()
+
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+
+        if result is None:
+            return [], [], [
+                f"Retail crawler returned no result: {brand}"
+            ]
+
+        # Dedicated retail crawlers return:
+        # (records, crawled_pages, debug_logs)
+        if isinstance(result, tuple):
+            if len(result) == 3:
+                records, crawled_pages, debug_logs = result
+            elif len(result) == 1:
+                records = result[0]
+                crawled_pages = []
+                debug_logs = []
+            else:
+                records = list(result)
+                crawled_pages = []
+                debug_logs = []
+        elif isinstance(result, list):
+            records = result
+            crawled_pages = []
+            debug_logs = []
+        else:
+            records = list(result)
+            crawled_pages = []
+            debug_logs = []
+
+        records = records or []
+
+        # Keep the dedicated parser's Brand value. This matters
+        # for MWG because TGDD and DMX can share locator pages.
+        for record in records:
+            if isinstance(record, dict) and not record.get("Brand"):
+                record["Brand"] = brand
+
+        print(
+            f"DEBUG RETAIL: final records={len(records)}"
+        )
+
+        return (
+            records,
+            crawled_pages or [],
+            debug_logs or [],
+        )
+
+    # ========================================================
     # OTHER BRANDS
     # ========================================================
+    # Preserve the existing generic crawler for all brands that
+    # do not have a dedicated parser.
 
     return asyncio.run(
         crawl_website(
