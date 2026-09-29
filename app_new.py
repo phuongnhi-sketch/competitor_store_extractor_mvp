@@ -169,17 +169,31 @@ if not BRAND_CONFIG:
     BRAND_CONFIG = {
         "JOLLIBEE": "https://jollibee.com.vn/cua-hang/",
         "PHUC LONG": "https://www.phuclong.com.vn/",
-        "HIGHLANDS COFFEE": "https://order.highlandscoffee.com.vn/he-thong-cua-han",
-        "STARBUCKS": "https://www.starbucks.vn/store-locator/",
+        "HIGHLANDS COFFEE": (
+            "https://order.highlandscoffee.com.vn/"
+            "he-thong-cua-han"
+        ),
+        "STARBUCKS": (
+            "https://www.starbucks.vn/"
+            "store-locator/"
+        ),
         "KFC": (
             "https://www.kfcvietnam.com.vn/"
             "he-thong-nha-hang-kfc"
         ),
-        "LOTTERIA": "https://www.lotteria.vn/danh-sach-so-dien-thoai-cua-hang-LOTTERIA",
-        "PIZZA 4P'S": "https://pizza4ps.com/vn/location/",
-        "PIZZA HUT": "https://pizzahut.vn/store-location/",
-        "DOMINO'S": "https://dominos.vn/store-locations/",
-
+        "LOTTERIA": (
+            "https://www.lotteria.vn/"
+            "danh-sach-so-dien-thoai-cua-hang-LOTTERIA"
+        ),
+        "PIZZA 4P'S": (
+            "https://pizza4ps.com/vn/location/"
+        ),
+        "PIZZA HUT": (
+            "https://pizzahut.vn/store-location/"
+        ),
+        "DOMINO'S": (
+            "https://dominos.vn/store-locations/"
+        ),
     }
 
 
@@ -398,9 +412,6 @@ def normalize_province(value):
 
     # --------------------------------------------------------
     # Other common city prefixes
-    #
-    # Only remove common administrative prefixes when the
-    # remaining value is a known city name.
     # --------------------------------------------------------
 
     known_city_names = {
@@ -455,10 +466,6 @@ def normalize_province(value):
 
     # --------------------------------------------------------
     # Preserve original value if unknown
-    #
-    # Important:
-    # We do NOT aggressively modify unknown provinces because
-    # this could accidentally merge different locations.
     # --------------------------------------------------------
 
     return value
@@ -610,7 +617,7 @@ st.subheader(
 
 
 # ============================================================
-# BRAND
+# BRAND + INPUT METHOD
 # ============================================================
 
 brand_col, source_col = st.columns(
@@ -620,20 +627,28 @@ brand_col, source_col = st.columns(
 
 with brand_col:
 
-    selected_brand = st.selectbox(
-        "Brand",
-        options=BRANDS,
-        index=(
-            BRANDS.index("KFC")
-            if "KFC" in BRANDS
-            else 0
-        ),
+    # --------------------------------------------------------
+    # Add Custom / Other option
+    #
+    # Existing configured brands are NOT changed.
+    # --------------------------------------------------------
+
+    brand_options = [
+        "Custom / Other"
+    ] + BRANDS
+
+    default_brand_index = (
+        brand_options.index("KFC")
+        if "KFC" in brand_options
+        else 0
     )
 
+    selected_brand = st.selectbox(
+        "Brand",
+        options=brand_options,
+        index=default_brand_index,
+    )
 
-# ============================================================
-# INPUT METHOD
-# ============================================================
 
 with source_col:
 
@@ -651,39 +666,71 @@ with source_col:
 # WEBSITE / URL
 # ============================================================
 
+custom_brand_name = ""
+urls = []
+
+
 if source_type == "Configured website":
 
-    configured_url = BRAND_CONFIG.get(
-        selected_brand,
-        "",
-    )
+    # --------------------------------------------------------
+    # Configured website
+    # --------------------------------------------------------
 
-    st.text_input(
-        "Website",
-        value=configured_url,
-        disabled=True,
-    )
+    if selected_brand == "Custom / Other":
 
-    urls = (
-        [configured_url]
-        if configured_url
-        else []
-    )
+        st.warning(
+            "Custom / Other does not have a configured website. "
+            "Please select Custom URL."
+        )
+
+    else:
+
+        configured_url = BRAND_CONFIG.get(
+            selected_brand,
+            "",
+        )
+
+        st.text_input(
+            "Website",
+            value=configured_url,
+            disabled=True,
+        )
+
+        if configured_url:
+
+            urls = [
+                configured_url
+            ]
 
 else:
+
+    # --------------------------------------------------------
+    # Custom URL
+    # --------------------------------------------------------
+
+    custom_brand_name = st.text_input(
+        "Brand name (optional)",
+        placeholder=(
+            "Example: Burger King"
+        ),
+        help=(
+            "Optional. This name is only used when "
+            "the crawler does not detect a Brand."
+        ),
+    ).strip()
 
     custom_url = st.text_input(
         "Website URL",
         placeholder=(
             "https://example.com/"
         ),
-    )
+    ).strip()
 
-    urls = (
-        [custom_url.strip()]
-        if custom_url.strip()
-        else []
-    )
+    if custom_url:
+
+        urls = [
+            custom_url
+        ]
 
 
 # ============================================================
@@ -704,10 +751,33 @@ max_pages = st.number_input(
 
 
 # ============================================================
+# DETERMINE CRAWLER MODE
+# ============================================================
+
+# IMPORTANT:
+#
+# Dedicated KFC crawler is used ONLY when:
+#
+#   1. Brand = KFC
+#   2. Input method = Configured website
+#
+# If user selects Custom URL, EVEN IF Brand = KFC,
+# the custom URL MUST go through the generic crawler.
+#
+# This is the key fix for the previous bug.
+# ============================================================
+
+use_kfc_dedicated_crawler = (
+    selected_brand == "KFC"
+    and source_type == "Configured website"
+)
+
+
+# ============================================================
 # INFORMATION BOX
 # ============================================================
 
-if selected_brand == "KFC":
+if use_kfc_dedicated_crawler:
 
     st.info(
         "KFC uses the existing dedicated KFC crawler. "
@@ -716,11 +786,21 @@ if selected_brand == "KFC":
         "is kept unchanged."
     )
 
-elif selected_brand == "LOTTERIA":
+elif (
+    selected_brand == "LOTTERIA"
+    and source_type == "Configured website"
+):
 
     st.info(
         "Lotteria uses the crawler/parser configured "
         "for this brand."
+    )
+
+elif source_type == "Custom URL":
+
+    st.caption(
+        "Custom URL always uses the generic crawler. "
+        "The selected Brand does not change the crawler."
     )
 
 else:
@@ -749,6 +829,10 @@ run_button = st.button(
 # ============================================================
 
 if run_button:
+
+    # --------------------------------------------------------
+    # Validate URL
+    # --------------------------------------------------------
 
     if not urls:
 
@@ -813,18 +897,25 @@ if run_button:
 
         try:
 
-            # ------------------------------------------------
-            # Run crawler
+            # =================================================
+            # KFC DEDICATED MODE
+            # =================================================
             #
-            # KFC is handled directly by the existing dedicated
-            # crawler. This avoids passing its async coroutine
-            # through the generic crawler integration.
+            # This is ONLY for:
             #
-            # Other brands continue to use the existing generic
-            # extract_store_data() from crawler.py.
-            # ------------------------------------------------
+            # Brand = KFC
+            # Input = Configured website
+            #
+            # crawl_kfc() does NOT receive the custom URL.
+            # It uses its own existing KFC logic.
+            # =================================================
 
-            if selected_brand == "KFC":
+            if use_kfc_dedicated_crawler:
+
+                debug_lines.append(
+                    "Crawler mode: "
+                    "KFC dedicated crawler"
+                )
 
                 from brands.kfc import crawl_kfc
 
@@ -835,7 +926,33 @@ if run_button:
                 pages = []
                 logs = []
 
+            # =================================================
+            # GENERIC MODE
+            # =================================================
+            #
+            # This covers:
+            #
+            # - KFC + Custom URL
+            # - Other Brand + Configured website
+            # - Other Brand + Custom URL
+            # - Custom / Other + Custom URL
+            #
+            # Most importantly:
+            #
+            # KFC + Custom URL will NOT call crawl_kfc().
+            # =================================================
+
             else:
+
+                debug_lines.append(
+                    "Crawler mode: "
+                    "Generic crawler"
+                )
+
+                debug_lines.append(
+                    f"Generic crawler URL: "
+                    f"{url}"
+                )
 
                 result = extract_store_data(
                     url,
@@ -898,6 +1015,57 @@ if run_button:
                 logs = list(
                     logs
                 )
+
+            # =================================================
+            # CUSTOM BRAND FALLBACK
+            # =================================================
+            #
+            # If user entered a Brand name for Custom URL,
+            # use it ONLY when crawler did not detect Brand.
+            #
+            # Example:
+            #
+            # User enters:
+            #   Brand name = "ABC Coffee"
+            #
+            # Crawler returns:
+            #   Brand = ""
+            #
+            # Result becomes:
+            #   Brand = "ABC Coffee"
+            #
+            # But if crawler already detected:
+            #   Brand = "ABC"
+            #
+            # We keep "ABC".
+            # =================================================
+
+            if (
+                source_type == "Custom URL"
+                and custom_brand_name
+            ):
+
+                for record in records:
+
+                    if not isinstance(
+                        record,
+                        dict,
+                    ):
+                        continue
+
+                    existing_brand = str(
+                        record.get(
+                            "Brand",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if not existing_brand:
+
+                        record[
+                            "Brand"
+                        ] = custom_brand_name
 
             # ------------------------------------------------
             # Add results
@@ -1040,21 +1208,41 @@ if run_button:
         f"Raw rows: **{raw_count:,}**"
     )
 
-    # --------------------------------------------------------
-    # KFC:
-    # Do NOT run generic dedupe.
+    # ========================================================
+    # DEDUPLICATION
+    # ========================================================
     #
-    # Other brands:
-    # Keep existing generic dedupe.
-    # --------------------------------------------------------
+    # ONLY the real KFC dedicated crawler skips generic
+    # dedupe.
+    #
+    # KFC + Custom URL MUST use generic dedupe.
+    #
+    # This is controlled by:
+    #
+    #     use_kfc_dedicated_crawler
+    #
+    # rather than:
+    #
+    #     selected_brand == "KFC"
+    # ========================================================
 
-    if selected_brand == "KFC":
+    if use_kfc_dedicated_crawler:
+
+        debug_dedupe_message = (
+            "KFC dedicated mode: "
+            "generic dedupe skipped."
+        )
 
         deduped_records = (
             all_records
         )
 
     else:
+
+        debug_dedupe_message = (
+            "Generic mode: "
+            "generic dedupe applied."
+        )
 
         try:
 
@@ -1072,6 +1260,17 @@ if run_button:
             )
 
             st.stop()
+
+    # --------------------------------------------------------
+    # Dedupe debug
+    # --------------------------------------------------------
+
+    with debug_expander:
+
+        st.code(
+            debug_dedupe_message,
+            language="text",
+        )
 
     final_count = len(
         deduped_records
