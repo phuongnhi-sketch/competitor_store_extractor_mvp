@@ -734,28 +734,6 @@ async def _crawl_mwg_brand(
     )
 
     return records, pages, logs
-   )
-
-            body_text = await get_body_text(
-                page
-            )
-
-            records.extend(
-                parse_mwg_locator_text(
-                    body_text,
-                    start_url,
-                    brand,
-                )
-            )
-
-        await browser.close()
-
-    records = dedupe_records_local(
-        records
-    )
-
-    return records, pages, logs
-
 
 def detect_mwg_brand(
     store_name,
