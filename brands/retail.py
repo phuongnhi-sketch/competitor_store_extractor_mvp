@@ -984,39 +984,7 @@ def extract_mwg_address_from_store_line(
         return ""
 
     return value
-click_load_more(
-            page,
-            max_clicks=50,
-        )
 
-        links = await get_page_links(
-            page,
-            page.url,
-        )
-
-        store_links = []
-
-        for item in links:
-
-            href = item["href"]
-
-            if not is_same_domain(
-                start_url,
-                href,
-            ):
-                continue
-
-            path = normalize_text(
-                urlparse(href).path
-            )
-
-            # FPT store detail pages normally contain
-            # /cua-hang/
-            if (
-                "/cua-hang/"
-                not in path
-            ):
-                continue
 
             # Exclude the locator root itself
             if path.rstrip(

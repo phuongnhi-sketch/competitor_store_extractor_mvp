@@ -1,0 +1,180 @@
+
+        # The selected crawler must only return the requested chain.
+        if (
+            normalize_text(detected_brand)
+            != requested_normalized
+        ):
+            continue
+
+        # Ignore UI/navigation/footer lines that happen to mention
+        # the brand.
+        if any(
+            phrase in normalized
+            for phrase in [
+                "tim sieu thi",
+                "he thong sieu thi",
+                "cac tien ich",
+                "tuyen dung",
+                "website cung tap doan",
+                "goi mua",
+                "bao hanh",
+                "xem them",
+            ]
+        ):
+            continue
+
+        # A real store card has address-like information.
+        address = extract_mwg_address_from_store_line(
+            line,
+            detected_brand,
+        )
+
+        if not address:
+            continue
+
+        # Remove the leading brand from StoreName.
+        store_name = (
+            "Điện máy Xanh"
+            if detected_brand == "DIEN MAY XANH"
+            else "Thế giới di động"
+        )
+
+        phone = extract_phone(line)
+
+        records.append(
+            make_record(
+                brand=detected_brand,
+                store_name=store_name,
+                address=address,
+                phone=phone,
+                source_url=source_url,
+                method="MWG geographic locator page",
+            )
+        )
+
+    return records
+
+
+def extract_mwg_address_from_store_line(
+    line,
+    detected_brand,
+):
+    """
+    Extract the current address from a single MWG store-card line.
+
+    The current website appends:
+        - Xem bản đồ
+    and may append:
+        Ngày DD/MM
+    before the map link.
+
+    We remove those UI fragments before validating the address.
+    """
+
+    value = clean_text(line)
+
+    normalized = normalize_text(value)
+
+    if detected_brand == "DIEN MAY XANH":
+        brand_regex = r"^dien\s*may\s*xanh\b"
+    else:
+        brand_regex = r"^the\s*gioi\s*di\s*dong\b"
+
+    value = re.sub(
+        brand_regex,
+        "",
+        value,
+        count=1,
+        flags=re.I,
+    ).strip(" -:|")
+
+    value = re.sub(
+        r"\s*-?\s*ngay\s*\d{1,2}/\d{1,2}\s*-?\s*xem\s*ban\s*do.*$",
+        "",
+        value,
+        flags=re.I,
+    ).strip(" -:|")
+
+    value = re.sub(
+        r"\s*-?\s*xem\s*ban\s*do.*$",
+        "",
+        value,
+        flags=re.I,
+    ).strip(" -:|")
+
+    if not value:
+        return ""
+
+    normalized_value = normalize_text(value)
+
+    # Strong signal that this is an address rather than a UI label.
+    address_markers = [
+        " duong ",
+        " duong",
+        " phuong ",
+        " xa ",
+        " tinh ",
+        " thanh pho ",
+        " quoc lo ",
+        " khu pho ",
+        " ap ",
+        " thon ",
+        " so ",
+        " km ",
+    ]
+
+    if not any(
+        marker in f" {normalized_value} "
+        for marker in address_markers
+    ):
+        return ""
+
+    # Avoid accidentally capturing very long page/UI text.
+    if len(value) > 500:
+        return ""
+
+    return value
+
+
+            # Exclude the locator root itself
+            if path.rstrip(
+                "/"
+            ) == "/cua-hang":
+                continue
+
+            store_links.append(
+                item
+            )
+
+        store_links = unique_store_links(
+            store_links
+        )
+
+        logs.append(
+            f"FPT store links: "
+            f"{len(store_links)}"
+        )
+
+        for item in store_links:
+
+            store_url = item["href"]
+
+            detail = await context.new_page()
+
+            try:
+
+                ok = await safe_goto(
+                    detail,
+                    store_url,
+                    wait_ms=1200,
+                )
+
+                if not ok:
+                    continue
+
+                text = await get_body_text(
+                    detail
+                )
+
+                store_name = (
+                    extract_fpt_store_name(
