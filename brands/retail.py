@@ -787,7 +787,7 @@ def extract_store_name_from_text(
 
     return ""
 
---def parse_mwg_locator_text(
+def parse_mwg_locator_text(
     body_text,
     source_url,
     requested_brand,
