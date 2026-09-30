@@ -2029,16 +2029,25 @@ def parse_pharmacity_text(
 
 async def crawl_bachhoaxanh(start_url=None):
     """
-    Bách Hóa Xanh locator crawler.
+    Bách Hóa Xanh nationwide crawler.
 
-    Follow the same locator-page approach as MWG:
-      1. Open the national store-system page.
-      2. Load the store list on that page.
-      3. Parse store cards from locator-page text.
-      4. Do not crawl every individual store detail URL.
+    BHX exposes store data through browser-accessible APIs:
 
-    This keeps the crawl focused on the store-system page and
-    avoids turning each store into a separate browser navigation.
+        /gw/LocationV3/GetFull
+            -> province / ward hierarchy
+
+        /gw/Location/V2/GetStoresByLocation
+            -> store details by province
+
+    The API is called from inside the Playwright browser context
+    because direct requests to the API can return HTTP 403.
+
+    Flow:
+        GetFull
+          -> all provinces / wards
+          -> GetStoresByLocation per province
+          -> paginate until province total is reached
+          -> local dedupe
     """
 
     start_url = (
@@ -2066,6 +2075,13 @@ async def crawl_bachhoaxanh(start_url=None):
 
         page = await context.new_page()
 
+        # ----------------------------------------------------
+        # Open BHX website first.
+        #
+        # This establishes the browser session required for
+        # the BHX APIs. Direct requests.get() may return 403.
+        # ----------------------------------------------------
+
         ok = await safe_goto(
             page,
             start_url,
@@ -2092,29 +2108,375 @@ async def crawl_bachhoaxanh(start_url=None):
             f"Opened: {opened_url}"
         )
 
-        # BHX exposes the store list on the locator page.
-        # Use the existing generic "Xem thêm" helper rather
-        # than opening individual store detail pages.
-        await click_load_more(
-            page,
-            max_clicks=500,
+        # ----------------------------------------------------
+        # Get province / ward hierarchy
+        # ----------------------------------------------------
+
+        location_result = await page.evaluate(
+            """
+            async () => {
+
+                const response = await fetch(
+                    'https://api.bachhoaxanh.com/gw/LocationV3/GetFull',
+                    {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'Accept':
+                                'application/json, text/plain, */*'
+                        }
+                    }
+                );
+
+                const text = await response.text();
+
+                return {
+                    status: response.status,
+                    text: text
+                };
+            }
+            """
         )
 
-        text = await get_body_text(
-            page
-        )
+        if location_result.get("status") != 200:
 
-        records.extend(
-            parse_bachhoaxanh_text(
-                text,
-                opened_url,
+            logs.append(
+                "BHX GetFull failed: "
+                f"HTTP {location_result.get('status')}"
             )
+
+            await browser.close()
+
+            return records, pages, logs
+
+        try:
+
+            location_data = (
+                __import__("json").loads(
+                    location_result["text"]
+                )
+            )
+
+        except Exception as e:
+
+            logs.append(
+                "BHX GetFull JSON parse failed: "
+                f"{type(e).__name__}: {e}"
+            )
+
+            await browser.close()
+
+            return records, pages, logs
+
+        provinces = (
+            location_data
+            .get("data", {})
+            .get("provinces", [])
         )
+
+        if not provinces:
+
+            logs.append(
+                "BHX GetFull returned no provinces."
+            )
+
+            await browser.close()
+
+            return records, pages, logs
 
         logs.append(
-            f"Parsed Bách Hóa Xanh locator records: "
-            f"{len(records)}"
+            f"BHX provinces discovered: "
+            f"{len(provinces)}"
         )
+
+        # ----------------------------------------------------
+        # Build ward lookup.
+        #
+        # GetFull already contains ward names, while
+        # GetStoresByLocation returns wardId.
+        # ----------------------------------------------------
+
+        ward_names = {}
+
+        for province in provinces:
+
+            for ward in province.get(
+                "wards",
+                []
+            ):
+
+                ward_id = ward.get(
+                    "id"
+                )
+
+                if ward_id is None:
+                    continue
+
+                ward_names[str(ward_id)] = (
+                    ward.get("name", "")
+                )
+
+        # ----------------------------------------------------
+        # Crawl every province.
+        # ----------------------------------------------------
+
+        stores_seen = set()
+
+        for province in provinces:
+
+            province_id = province.get(
+                "id"
+            )
+
+            province_name = clean_text(
+                province.get(
+                    "name",
+                    ""
+                )
+            )
+
+            if province_id is None:
+                continue
+
+            province_total = 0
+            province_count = 0
+            page_index = 0
+
+            logs.append(
+                f"BHX province: "
+                f"{province_name} "
+                f"(ID={province_id})"
+            )
+
+            while True:
+
+                api_url = (
+                    "https://api.bachhoaxanh.com"
+                    "/gw/Location/V2/GetStoresByLocation"
+                    f"?provinceId={province_id}"
+                    "&wardId=0"
+                    "&pageSize=100"
+                    f"&pageIndex={page_index}"
+                )
+
+                try:
+
+                    result = await page.evaluate(
+                        """
+                        async (url) => {
+
+                            const response =
+                                await fetch(
+                                    url,
+                                    {
+                                        method: 'GET',
+                                        credentials: 'include',
+                                        headers: {
+                                            'Accept':
+                                                'application/json, text/plain, */*'
+                                        }
+                                    }
+                                );
+
+                            const text =
+                                await response.text();
+
+                            return {
+                                status:
+                                    response.status,
+                                text: text
+                            };
+                        }
+                        """,
+                        api_url,
+                    )
+
+                except Exception as e:
+
+                    logs.append(
+                        "BHX API request error: "
+                        f"{province_name} | "
+                        f"pageIndex={page_index} | "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+                    break
+
+                if result.get("status") != 200:
+
+                    logs.append(
+                        "BHX API failed: "
+                        f"{province_name} | "
+                        f"pageIndex={page_index} | "
+                        f"HTTP {result.get('status')}"
+                    )
+
+                    break
+
+                try:
+
+                    payload = (
+                        __import__("json").loads(
+                            result["text"]
+                        )
+                    )
+
+                except Exception as e:
+
+                    logs.append(
+                        "BHX API JSON parse failed: "
+                        f"{province_name} | "
+                        f"pageIndex={page_index} | "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+                    break
+
+                data = payload.get(
+                    "data",
+                    {}
+                )
+
+                stores = data.get(
+                    "stores",
+                    []
+                )
+
+                total = data.get(
+                    "total",
+                    0
+                )
+
+                try:
+                    province_total = int(
+                        total or 0
+                    )
+                except Exception:
+                    province_total = 0
+
+                if not stores:
+                    break
+
+                new_store_count = 0
+
+                for store in stores:
+
+                    store_id = store.get(
+                        "storeId"
+                    )
+
+                    if store_id is None:
+                        continue
+
+                    store_key = str(
+                        store_id
+                    )
+
+                    if store_key in stores_seen:
+                        continue
+
+                    stores_seen.add(
+                        store_key
+                    )
+
+                    ward_id = store.get(
+                        "wardId"
+                    )
+
+                    ward_name = clean_text(
+                        ward_names.get(
+                            str(ward_id),
+                            ""
+                        )
+                    )
+
+                    store_location = clean_text(
+                        store.get(
+                            "storeLocation",
+                            ""
+                        )
+                    )
+
+                    store_address = clean_text(
+                        store.get(
+                            "storeAddress",
+                            ""
+                        )
+                    )
+
+                    lat = store.get(
+                        "lat",
+                        ""
+                    )
+
+                    lon = store.get(
+                        "lng",
+                        ""
+                    )
+
+                    records.append(
+                        make_record(
+                            brand="BACH HOA XANH",
+                            store_code=str(
+                                store_id
+                            ),
+                            store_name=(
+                                store_location
+                            ),
+                            address=(
+                                store_address
+                            ),
+                            province=(
+                                province_name
+                            ),
+                            ward=(
+                                ward_name
+                            ),
+                            lat=str(
+                                lat
+                                if lat is not None
+                                else ""
+                            ),
+                            lon=str(
+                                lon
+                                if lon is not None
+                                else ""
+                            ),
+                            source_url=(
+                                opened_url
+                            ),
+                            method=(
+                                "Bach Hoa Xanh API"
+                            ),
+                        )
+                    )
+
+                    new_store_count += 1
+                    province_count += 1
+
+                # ------------------------------------------------
+                # Stop when the province total has been reached.
+                # Also stop if the API stops returning new stores.
+                # ------------------------------------------------
+
+                if (
+                    province_total > 0
+                    and province_count
+                    >= province_total
+                ):
+                    break
+
+                if (
+                    new_store_count == 0
+                ):
+                    break
+
+                page_index += 1
+
+            logs.append(
+                f"BHX {province_name}: "
+                f"{province_count}/{province_total} stores"
+            )
 
         await browser.close()
 
@@ -2123,16 +2485,23 @@ async def crawl_bachhoaxanh(start_url=None):
     )
 
     logs.append(
-        f"Parsed Bách Hóa Xanh records after local dedupe: "
-        f"{len(records)}"
+        f"Parsed Bách Hóa Xanh nationwide records after "
+        f"local dedupe: {len(records)}"
     )
 
     return records, pages, logs
+
 
 def parse_bachhoaxanh_text(
     text,
     source_url,
 ):
+    """
+    Kept for backward compatibility with existing tests.
+
+    The production BHX crawler now uses the API directly.
+    """
+
     records = []
 
     lines = [
@@ -2141,9 +2510,7 @@ def parse_bachhoaxanh_text(
         if clean_text(x)
     ]
 
-    for index, line in enumerate(
-        lines
-    ):
+    for line in lines:
 
         normalized = normalize_text(
             line
@@ -2157,18 +2524,33 @@ def parse_bachhoaxanh_text(
 
         address = ""
 
-        for next_line in lines[
-            index + 1:index + 5
-        ]:
+        # Current BHX locator text normally contains the
+        # address in the same store line. Fall back to the
+        # following lines for older page formats.
+        address = re.sub(
+            r"^BHX\s+",
+            "",
+            line,
+            flags=re.I,
+        ).strip()
 
-            candidate = extract_address(
-                next_line
-            )
+        if not address:
 
-            if candidate:
+            for next_line in lines[
+                lines.index(line) + 1:
+                lines.index(line) + 5
+            ]:
 
-                address = candidate
-                break
+                candidate = extract_address(
+                    next_line
+                )
+
+                if candidate:
+                    address = candidate
+                    break
+
+        if not address:
+            continue
 
         records.append(
             make_record(
