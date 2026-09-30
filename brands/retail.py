@@ -9,6 +9,87 @@ from playwright.async_api import async_playwright
 # COMMON CONSTANTS
 # ============================================================
 
+# ============================================================
+# CURRENT VIETNAM 34-PROVINCE / CITY LOCATOR PATHS
+# ============================================================
+
+LONGCHAU_LOCATION_PATHS = [
+    "ha-noi",
+    "hai-phong",
+    "hue",
+    "da-nang",
+    "ho-chi-minh",
+    "can-tho",
+    "tinh-lai-chau",
+    "tinh-lao-cai",
+    "tinh-cao-bang",
+    "tinh-lang-son",
+    "tinh-thai-nguyen",
+    "tinh-tuyen-quang",
+    "tinh-phu-tho",
+    "tinh-bac-ninh",
+    "tinh-quang-ninh",
+    "tinh-hung-yen",
+    "tinh-ninh-binh",
+    "tinh-thanh-hoa",
+    "tinh-nghe-an",
+    "tinh-ha-tinh",
+    "tinh-quang-tri",
+    "tinh-quang-ngai",
+    "tinh-gia-lai",
+    "tinh-dak-lak",
+    "tinh-khanh-hoa",
+    "tinh-lam-dong",
+    "tinh-dong-nai",
+    "tinh-tay-ninh",
+    "tinh-vinh-long",
+    "tinh-dong-thap",
+    "tinh-an-giang",
+    "tinh-ca-mau",
+    "tinh-dien-bien",
+    "tinh-son-la",
+]
+
+FPT_LOCATION_PATHS = LONGCHAU_LOCATION_PATHS
+
+PHARMACITY_LOCATION_PATHS = [
+    "thanh-pho-ha-noi",
+    "thanh-pho-hai-phong",
+    "thanh-pho-hue",
+    "thanh-pho-da-nang",
+    "thanh-pho-ho-chi-minh",
+    "thanh-pho-can-tho",
+    "tinh-lai-chau",
+    "tinh-lao-cai",
+    "tinh-cao-bang",
+    "tinh-lang-son",
+    "tinh-thai-nguyen",
+    "tinh-tuyen-quang",
+    "tinh-phu-tho",
+    "tinh-bac-ninh",
+    "tinh-quang-ninh",
+    "tinh-hung-yen",
+    "tinh-ninh-binh",
+    "tinh-thanh-hoa",
+    "tinh-nghe-an",
+    "tinh-ha-tinh",
+    "tinh-quang-tri",
+    "tinh-quang-ngai",
+    "tinh-gia-lai",
+    "tinh-dak-lak",
+    "tinh-khanh-hoa",
+    "tinh-lam-dong",
+    "tinh-dong-nai",
+    "tinh-tay-ninh",
+    "tinh-vinh-long",
+    "tinh-dong-thap",
+    "tinh-an-giang",
+    "tinh-ca-mau",
+    "tinh-dien-bien",
+    "tinh-son-la",
+]
+
+
 OUTPUT_FIELDS = [
     "Brand",
     "StoreCode",
@@ -1113,214 +1194,89 @@ async def crawl_dienmayxanh(start_url=None):
 
 async def crawl_fptshop(start_url=None):
     """
-    Crawl FPT Shop store locator.
+    Crawl FPT Shop province/city locator pages.
 
-    FPT currently exposes a nationwide store system and
-    province-level / store-level pages.
+    The current FPT locator exposes one province/city page per
+    location. Each page loads its store cards with "Xem thêm".
+    We crawl the verified first-level location pages instead of
+    opening every individual store detail page.
     """
 
-    start_url = (
-        start_url
-        or "https://fptshop.com.vn/cua-hang"
-    )
+    default_root = "https://fptshop.com.vn/cua-hang"
+    if start_url:
+        urls_to_visit = [start_url.rstrip("/")]
+    else:
+        urls_to_visit = [
+            f"{default_root}/{path}"
+            for path in FPT_LOCATION_PATHS
+        ]
 
     records = []
     pages = []
     logs = []
 
     async with async_playwright() as p:
-
-        browser = await p.chromium.launch(
-            headless=True
-        )
+        browser = await p.chromium.launch(headless=True)
 
         context = await browser.new_context(
-            viewport={
-                "width": 1440,
-                "height": 1000,
-            },
+            viewport={"width": 1440, "height": 1000},
             locale="vi-VN",
         )
 
-        page = await context.new_page()
-
-        ok = await safe_goto(
-            page,
-            start_url,
-            wait_ms=3000,
-        )
-
-        if not ok:
-
-            logs.append(
-                f"Failed to open: {start_url}"
-            )
-
-            await browser.close()
-
-            return records, pages, logs
-
-        pages.append(
-            page.url
-        )
-
-        logs.append(
-            f"Opened: {page.url}"
-        )
-
-        await click_load_more(
-            page,
-            max_clicks=50,
-        )
-
-        links = await get_page_links(
-            page,
-            page.url,
-        )
-
-        store_links = []
-
-        for item in links:
-
-            href = item["href"]
-
-            if not is_same_domain(
-                start_url,
-                href,
-            ):
-                continue
-
-            path = normalize_text(
-                urlparse(href).path
-            )
-
-            # FPT store detail pages normally contain
-            # /cua-hang/
-            if (
-                "/cua-hang/"
-                not in path
-            ):
-                continue
-
-            # Exclude the locator root itself
-            if path.rstrip(
-                "/"
-            ) == "/cua-hang":
-                continue
-
-            store_links.append(
-                item
-            )
-
-        store_links = unique_store_links(
-            store_links
-        )
-
-        logs.append(
-            f"FPT store links: "
-            f"{len(store_links)}"
-        )
-
-        for item in store_links:
-
-            store_url = item["href"]
-
-            detail = await context.new_page()
+        for location_url in urls_to_visit:
+            page = await context.new_page()
 
             try:
-
                 ok = await safe_goto(
-                    detail,
-                    store_url,
-                    wait_ms=1200,
+                    page,
+                    location_url,
+                    wait_ms=2200,
                 )
 
                 if not ok:
+                    logs.append(
+                        f"FPT failed to open: {location_url}"
+                    )
                     continue
 
-                text = await get_body_text(
-                    detail
+                opened_url = page.url
+                pages.append(opened_url)
+
+                await click_load_more(
+                    page,
+                    max_clicks=100,
                 )
 
-                store_name = (
-                    extract_fpt_store_name(
-                        text,
-                        item["text"],
-                    )
+                text = await get_body_text(page)
+
+                location_records = parse_fpt_locator_text(
+                    text,
+                    opened_url,
                 )
 
-                address = extract_fpt_address(
-                    text
-                )
+                records.extend(location_records)
 
-                phone = extract_phone(
-                    text
-                )
-
-                lat, lon = (
-                    extract_coordinates_from_text(
-                        text
-                    )
-                )
-
-                if not store_name:
-                    store_name = item["text"]
-
-                if not address:
-                    address = extract_address(
-                        text
-                    )
-
-                records.append(
-                    make_record(
-                        brand="FPT SHOP",
-                        store_name=store_name,
-                        address=address,
-                        phone=phone,
-                        lat=lat,
-                        lon=lon,
-                        store_url=store_url,
-                        source_url=start_url,
-                        method="FPT store detail",
-                        store_code=extract_store_code(
-                            store_url
-                        ),
-                    )
+                logs.append(
+                    f"FPT {opened_url}: "
+                    f"{len(location_records)} records"
                 )
 
             except Exception as e:
-
                 logs.append(
-                    f"FPT error: "
-                    f"{store_url} | "
+                    f"FPT error: {location_url} | "
                     f"{type(e).__name__}: {e}"
                 )
 
             finally:
-
-                await detail.close()
-
-        # ----------------------------------------------------
-        # Fallback
-        # ----------------------------------------------------
-
-        if not records:
-
-            text = await get_body_text(
-                page
-            )
-
-            records.extend(
-                parse_fpt_locator_text(
-                    text,
-                    start_url,
-                )
-            )
+                await page.close()
 
         await browser.close()
 
-    records = dedupe_records_local(
-        records
+    records = dedupe_records_local(records)
+
+    logs.append(
+        f"Parsed FPT Shop records after local dedupe: "
+        f"{len(records)}"
     )
 
     return records, pages, logs
@@ -1409,6 +1365,14 @@ def parse_fpt_locator_text(
     text,
     source_url,
 ):
+    """
+    Parse the store-card lines exposed by an FPT province/city
+    locator page.
+
+    Current cards contain the current address followed by an
+    optional "Địa chỉ cũ:" segment.
+    """
+
     records = []
 
     lines = [
@@ -1417,42 +1381,74 @@ def parse_fpt_locator_text(
         if clean_text(x)
     ]
 
-    for index, line in enumerate(
-        lines
-    ):
+    for line in lines:
+        if "Địa chỉ cũ:" in line:
+            current_part = line.split(
+                "Địa chỉ cũ:",
+                1,
+            )[0].strip()
+        else:
+            current_part = line
 
-        normalized = normalize_text(
-            line
-        )
+        normalized = normalize_text(current_part)
 
-        if (
-            "fpt shop"
-            not in normalized
+        if not any(
+            marker in normalized
+            for marker in [
+                " p. ",
+                " x. ",
+                " phuong ",
+                " xa ",
+                " tinh ",
+                " tp. ",
+            ]
         ):
             continue
 
-        address = ""
+        if any(
+            phrase in normalized
+            for phrase in [
+                "he thong",
+                "thoi gian hoat dong",
+                "tim kiem cua hang",
+                "chon khu vuc",
+                "xem them cua hang",
+                "fpt shop he thong",
+            ]
+        ):
+            continue
 
-        for next_line in lines[
-            index + 1:index + 5
-        ]:
+        address = extract_address(current_part)
 
-            candidate = extract_address(
-                next_line
-            )
+        if not address:
+            # FPT current addresses commonly use abbreviated
+            # P./X./TP. forms.
+            if any(
+                marker in normalized
+                for marker in [
+                    " p. ",
+                    " x. ",
+                    " phuong ",
+                    " xa ",
+                    " tp. ",
+                ]
+            ):
+                address = current_part
 
-            if candidate:
+        if not address:
+            continue
 
-                address = candidate
-                break
+        store_name = current_part
+        phone = extract_phone(line)
 
         records.append(
             make_record(
                 brand="FPT SHOP",
-                store_name=line,
+                store_name=store_name,
                 address=address,
+                phone=phone,
                 source_url=source_url,
-                method="FPT locator page",
+                method="FPT province locator page",
             )
         )
 
@@ -1465,192 +1461,88 @@ def parse_fpt_locator_text(
 
 async def crawl_longchau(start_url=None):
     """
-    Crawl Long Châu store system.
+    Crawl Long Châu nationwide using the current first-level
+    province/city locator URLs.
 
-    Current Long Châu pages use:
-
-        /he-thong-cua-hang/<province>
-
-    and can go further into ward/district pages.
+    If a custom start_url is supplied, only that URL is crawled.
     """
 
-    start_url = (
-        start_url
-        or "https://nhathuoclongchau.com.vn/"
-        "he-thong-cua-hang"
-    )
+    default_root = "https://nhathuoclongchau.com.vn/he-thong-cua-hang"
+
+    if start_url:
+        urls_to_visit = [start_url.rstrip("/")]
+    else:
+        urls_to_visit = [
+            f"{default_root}/{path}"
+            for path in LONGCHAU_LOCATION_PATHS
+        ]
 
     records = []
     pages = []
     logs = []
 
     async with async_playwright() as p:
-
-        browser = await p.chromium.launch(
-            headless=True
-        )
+        browser = await p.chromium.launch(headless=True)
 
         context = await browser.new_context(
-            viewport={
-                "width": 1440,
-                "height": 1000,
-            },
+            viewport={"width": 1440, "height": 1000},
             locale="vi-VN",
         )
 
-        page = await context.new_page()
-
-        ok = await safe_goto(
-            page,
-            start_url,
-            wait_ms=3000,
-        )
-
-        if not ok:
-
-            logs.append(
-                f"Failed to open: {start_url}"
-            )
-
-            await browser.close()
-
-            return records, pages, logs
-
-        pages.append(
-            page.url
-        )
-
-        await click_load_more(
-            page,
-            max_clicks=50,
-        )
-
-        links = await get_page_links(
-            page,
-            page.url,
-        )
-
-        # ----------------------------------------------------
-        # Find province / district / store pages
-        # ----------------------------------------------------
-
-        location_links = []
-
-        for item in links:
-
-            href = item["href"]
-
-            if not is_same_domain(
-                start_url,
-                href,            ):
-                continue
-
-            path = normalize_text(
-                urlparse(href).path
-            )
-
-            if (
-                "/he-thong-cua-hang/"
-                not in path
-            ):
-                continue
-
-            location_links.append(
-                item
-            )
-
-        location_links = unique_store_links(
-            location_links
-        )
-
-        logs.append(
-            f"Long Chau location links: "
-            f"{len(location_links)}"
-        )
-
-        # ----------------------------------------------------
-        # Open location pages
-        # ----------------------------------------------------
-
-        visited = set()
-
-        # Start page first
-        location_urls = [
-            start_url
-        ]
-
-        location_urls.extend(
-            item["href"]
-            for item in location_links
-        )
-
-        for location_url in location_urls:
-
-            if location_url in visited:
-                continue
-
-            visited.add(
-                location_url
-            )
-            location_page = (
-                await context.new_page()
-            )
+        for location_url in urls_to_visit:
+            page = await context.new_page()
 
             try:
-
                 ok = await safe_goto(
-                    location_page,
+                    page,
                     location_url,
-                    wait_ms=1500,
+                    wait_ms=2200,
                 )
 
                 if not ok:
+                    logs.append(
+                        f"Long Chau failed to open: {location_url}"
+                    )
                     continue
 
-                pages.append(
-                    location_page.url
-                )
+                opened_url = page.url
+                pages.append(opened_url)
 
                 await click_load_more(
-                    location_page,
-                    max_clicks=30,
+                    page,
+                    max_clicks=100,
                 )
 
-                text = await get_body_text(
-                    location_page
+                text = await get_body_text(page)
+
+                location_records = parse_longchau_text(
+                    text,
+                    opened_url,
                 )
 
-                # ------------------------------------------------
-                # Extract Long Châu addresses from location page
-                # ------------------------------------------------
+                records.extend(location_records)
 
-                location_records = (
-                    parse_longchau_text(
-                        text,
-                        location_url,
-                    )
-                )
-
-                records.extend(
-                    location_records
+                logs.append(
+                    f"Long Chau {opened_url}: "
+                    f"{len(location_records)} records"
                 )
 
             except Exception as e:
-
                 logs.append(
-                    f"Long Chau error: "
-                    f"{location_url} | "
+                    f"Long Chau error: {location_url} | "
                     f"{type(e).__name__}: {e}"
                 )
 
             finally:
-
-                await location_page.close()
+                await page.close()
 
         await browser.close()
 
-    records = dedupe_records_local(
-        records
+    records = dedupe_records_local(records)
+
+    logs.append(
+        f"Parsed Long Chau records after local dedupe: "
+        f"{len(records)}"
     )
 
     return records, pages, logs
@@ -1689,23 +1581,24 @@ def parse_longchau_text(
             line
         )
 
-        if (
-            normalized.startswith(
-                "ho chi minh"
-            )
-            or normalized.startswith(
-                "ha noi"
-            )
+        if re.match(
+            r"^co\s+\d+\s+nha thuoc tai\s+",
+            normalized,
         ):
-            province = line
+            province = re.sub(
+                r"^co\s+\d+\s+nha thuoc tai\s+",
+                "",
+                line,
+                flags=re.I,
+            ).strip()
 
         if (
             "phuong " in normalized
             or "xa " in normalized
+            or " p. " in f" {normalized} "
+            or " x. " in f" {normalized} "
         ):
-            # Keep as potential ward,
-            # but don't overwrite province.
-            if len(line) < 100:
+            if len(line) < 150:
                 ward = line
 
     for line in lines:
@@ -1768,173 +1661,92 @@ def parse_longchau_text(
 
 async def crawl_pharmacity(start_url=None):
     """
-    Pharmacity store locator parser.
+    Crawl Pharmacity first-level province/city locator pages.
 
-    Uses the /he-thong-cua-hang/ hierarchy.
+    The current locator uses routes such as:
+        /he-thong-cua-hang/thanh-pho-ha-noi
+        /he-thong-cua-hang/tinh-thanh-hoa
+
+    Each location page exposes the store list and can be loaded
+    further with "Xem thêm".
     """
 
-    start_url = (
-        start_url
-        or "https://www.pharmacity.vn/"
-        "he-thong-cua-hang"
-    )
+    default_root = "https://www.pharmacity.vn/he-thong-cua-hang"
+
+    if start_url:
+        urls_to_visit = [start_url.rstrip("/")]
+    else:
+        urls_to_visit = [
+            f"{default_root}/{path}"
+            for path in PHARMACITY_LOCATION_PATHS
+        ]
 
     records = []
     pages = []
     logs = []
 
     async with async_playwright() as p:
-
-        browser = await p.chromium.launch(
-            headless=True
-        )
+        browser = await p.chromium.launch(headless=True)
 
         context = await browser.new_context(
-            viewport={
-                "width": 1440,
-                "height": 1000,
-            },
+            viewport={"width": 1440, "height": 1000},
             locale="vi-VN",
         )
 
-        page = await context.new_page()
-
-        ok = await safe_goto(
-            page,
-            start_url,
-            wait_ms=3500,
-        )
-
-        if not ok:
-
-            logs.append(
-                f"Failed to open: {start_url}"
-            )
-
-            await browser.close()
-
-            return records, pages, logs
-
-        pages.append(
-            page.url
-        )
-
-        await click_load_more(
-            page,
-            max_clicks=50,
-        )
-
-        links = await get_page_links(
-            page,
-            page.url,
-        )
-
-        location_links = []
-
-        for item in links:
-
-            href = item["href"]
-
-            if not is_same_domain(
-                start_url,
-                href,
-            ):
-                continue
-
-            path = normalize_text(
-                urlparse(href).path
-            )
-
-            if (
-                "/he-thong-cua-hang/"
-                not in path
-            ):
-                continue
-
-            location_links.append(
-                item
-            )
-
-        location_links = unique_store_links(
-            location_links
-        )
-
-        logs.append(
-            f"Pharmacity location links: "
-            f"{len(location_links)}"
-        )
-
-        visited = set()
-
-        urls_to_visit = [
-            start_url
-        ]
-
-        urls_to_visit.extend(
-            item["href"]
-            for item in location_links
-        )
-
         for location_url in urls_to_visit:
-
-            if location_url in visited:
-                continue
-
-            visited.add(
-                location_url
-            )
-
-            location_page = (
-                await context.new_page()
-            )
+            page = await context.new_page()
 
             try:
-
                 ok = await safe_goto(
-                    location_page,
+                    page,
                     location_url,
-                    wait_ms=1500,
+                    wait_ms=2500,
                 )
 
                 if not ok:
+                    logs.append(
+                        f"Pharmacity failed to open: {location_url}"
+                    )
                     continue
 
-                pages.append(
-                    location_page.url
-                )
+                opened_url = page.url
+                pages.append(opened_url)
 
                 await click_load_more(
-                    location_page,
-                    max_clicks=30,
+                    page,
+                    max_clicks=100,
                 )
 
-                text = await get_body_text(
-                    location_page
+                text = await get_body_text(page)
+
+                location_records = parse_pharmacity_text(
+                    text,
+                    opened_url,
                 )
 
-                records.extend(
-                    parse_pharmacity_text(
-                        text,
-                        location_url,
-                    )
+                records.extend(location_records)
+
+                logs.append(
+                    f"Pharmacity {opened_url}: "
+                    f"{len(location_records)} records"
                 )
 
             except Exception as e:
-
                 logs.append(
-                    f"Pharmacity error: "
-                    f"{location_url} | "
+                    f"Pharmacity error: {location_url} | "
                     f"{type(e).__name__}: {e}"
                 )
 
             finally:
-
-                await location_page.close()
+                await page.close()
 
         await browser.close()
 
-    records = dedupe_records_local(
-        records
+    records = dedupe_records_local(records)
+
+    logs.append(
+        f"Parsed Pharmacity records after local dedupe: "
+        f"{len(records)}"
     )
 
     return records, pages, logs
@@ -1961,21 +1773,19 @@ def parse_pharmacity_text(
             line
         )
 
-        if (
-            normalized.startswith(
-                "ho chi minh"
-            )
-            or normalized.startswith(
-                "ha noi"
-            )
+        if re.match(
+            r"^(tinh|thanh pho)\s+",
+            normalized,
         ):
             province = line
 
         if (
             "phuong " in normalized
             or "xa " in normalized
+            or " p. " in f" {normalized} "
+            or " x. " in f" {normalized} "
         ):
-            if len(line) < 100:
+            if len(line) < 150:
                 ward = line
 
     for line in lines:
