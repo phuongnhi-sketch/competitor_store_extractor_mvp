@@ -1065,6 +1065,12 @@ def extract_mwg_address_from_store_line(
     return value
 
 async def crawl_thegioididong(start_url=None):
+    # Streamlit may pass the locator URL with a trailing slash.
+    # TGDD's locator behaves differently in that case, so normalize
+    # the URL before opening it.
+    if start_url:
+        start_url = start_url.rstrip("/")
+
     return await _crawl_mwg_brand(
         brand="THE GIOI DI DONG",
         start_url=(
@@ -2023,20 +2029,22 @@ def parse_pharmacity_text(
 
 async def crawl_bachhoaxanh(start_url=None):
     """
-    Bách Hóa Xanh store locator.
+    Bách Hóa Xanh locator crawler.
 
-    Uses the locator page and store/location links exposed
-    by the site.
+    Follow the same locator-page approach as MWG:
+      1. Open the national store-system page.
+      2. Load the store list on that page.
+      3. Parse store cards from locator-page text.
+      4. Do not crawl every individual store detail URL.
+
+    This keeps the crawl focused on the store-system page and
+    avoids turning each store into a separate browser navigation.
     """
 
-    start_urls = []
-
-    if start_url:
-        start_urls.append(start_url)
-
-    start_urls.extend([
-        "https://www.bachhoaxanh.com/he-thong-sieu-thi",        "https://www.bachhoaxanh.com/",
-    ])
+    start_url = (
+        start_url
+        or "https://www.bachhoaxanh.com/he-thong-sieu-thi"
+    ).rstrip("/")
 
     records = []
     pages = []
@@ -2058,175 +2066,55 @@ async def crawl_bachhoaxanh(start_url=None):
 
         page = await context.new_page()
 
-        opened_url = ""
+        ok = await safe_goto(
+            page,
+            start_url,
+            wait_ms=3000,
+        )
 
-        for start_url in start_urls:
-
-            ok = await safe_goto(
-                page,
-                start_url,
-                wait_ms=3000,
-            )
-
-            if ok:
-
-                opened_url = page.url
-                break
-
-        if not opened_url:
+        if not ok:
 
             logs.append(
-                "Could not open Bách Hóa Xanh locator."
+                f"Failed to open: {start_url}"
             )
 
             await browser.close()
 
             return records, pages, logs
 
+        opened_url = page.url
+
         pages.append(
-            opened_url        )
+            opened_url
+        )
 
         logs.append(
             f"Opened: {opened_url}"
         )
 
+        # BHX exposes the store list on the locator page.
+        # Use the existing generic "Xem thêm" helper rather
+        # than opening individual store detail pages.
         await click_load_more(
             page,
-            max_clicks=50,
+            max_clicks=500,
         )
 
-        links = await get_page_links(
-            page,
-            page.url,
+        text = await get_body_text(
+            page
         )
 
-        store_links = []
-
-        for item in links:
-
-            href = item["href"]
-
-            if not is_same_domain(
-                page.url,
-                href,
-            ):
-                continue
-
-            path = normalize_text(
-                urlparse(href).path
+        records.extend(
+            parse_bachhoaxanh_text(
+                text,
+                opened_url,
             )
-
-            if any(
-                keyword in path
-                for keyword in [
-                    "cua-hang",
-                    "sieu-thi",
-                    "bach-hoa-xanh",
-                ]
-            ):
-
-                store_links.append(
-                    item
-                )
-
-        store_links = unique_store_links(
-            store_links
         )
 
         logs.append(
-            f"Bach Hoa Xanh store links: "
-            f"{len(store_links)}"
+            f"Parsed Bách Hóa Xanh locator records: "
+            f"{len(records)}"
         )
-
-        # ----------------------------------------------------
-        # Detail pages
-        # ----------------------------------------------------
-
-        for item in store_links:
-
-            store_url = item["href"]
-
-            detail = await context.new_page()
-
-            try:
-
-                ok = await safe_goto(
-                    detail,
-                    store_url,
-                    wait_ms=1200,
-                )
-
-                if not ok:
-                    continue
-
-                text = await get_body_text(
-                    detail
-                )
-
-                store_name = (
-                    item["text"]
-                    or "Bách Hóa Xanh"
-                )
-
-                address = extract_address(
-                    text
-                )
-
-                phone = extract_phone(
-                    text
-                )
-
-                lat, lon = (
-                    extract_coordinates_from_text(
-                        text
-                    )
-                )
-
-                records.append(
-                    make_record(
-                        brand="BACH HOA XANH",
-                        store_name=store_name,
-                        address=address,
-                        phone=phone,
-                        lat=lat,
-                        lon=lon,
-                        store_url=store_url,
-                        source_url=opened_url,
-                        method="Bach Hoa Xanh store detail",
-                        store_code=extract_store_code(
-                            store_url
-                        ),
-                    )
-                )
-
-            except Exception as e:
-
-                logs.append(
-                    f"Bach Hoa Xanh error: "
-                    f"{store_url} | "
-                    f"{type(e).__name__}: {e}"
-                )
-
-            finally:
-
-                await detail.close()
-
-        # ----------------------------------------------------
-        # Fallback page parser
-        # ----------------------------------------------------
-
-        if not records:
-
-            text = await get_body_text(
-                page
-            )
-
-            records.extend(
-                parse_bachhoaxanh_text(
-                    text,
-                    opened_url,
-                )
-            )
 
         await browser.close()
 
@@ -2234,8 +2122,12 @@ async def crawl_bachhoaxanh(start_url=None):
         records
     )
 
-    return records, pages, logs
+    logs.append(
+        f"Parsed Bách Hóa Xanh records after local dedupe: "
+        f"{len(records)}"
+    )
 
+    return records, pages, logs
 
 def parse_bachhoaxanh_text(
     text,
