@@ -650,9 +650,23 @@ async def _crawl_mwg_brand(
 
         locator_links = []
 
-        main_path = normalize_text(
-            urlparse(opened_url).path
-        ).rstrip("/")
+        # The two MWG brands use different locator URL roots.
+        #
+        # Điện Máy Xanh:
+        #   /he-thong-sieu-thi-dien-may/<province>
+        #
+        # Thế Giới Di Động:
+        #   /sieu-thi-the-gioi-di-dong/<province>
+        #
+        # The TGDD national URL may redirect to the canonical
+        # /sieu-thi-the-gioi-di-dong path, so do not derive the
+        # geographic root only from the originally requested URL.
+        if brand == "THE GIOI DI DONG":
+            main_path = "/sieu-thi-the-gioi-di-dong"
+        else:
+            main_path = normalize_text(
+                urlparse(opened_url).path
+            ).rstrip("/")
 
         for item in links:
             href = item.get("href", "")
