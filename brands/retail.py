@@ -1076,7 +1076,7 @@ async def crawl_thegioididong(start_url=None):
         start_url=(
             start_url
             or "https://www.thegioididong.com/"
-            "he-thong-sieu-thi-the-gioi-di-dong/"
+            "he-thong-sieu-thi-the-gioi-dong"
         ),
         brand_keywords=[
             "Thế giới di động",
