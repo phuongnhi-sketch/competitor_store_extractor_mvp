@@ -117,6 +117,27 @@ It deliberately excludes:
 
 The load-more function and parser were left unchanged.
 
+### TGDD test finding
+The first direct test of `crawl_thegioididong()` returned only 4 records and 0 geographic locator links.
+
+Root cause:
+- The current TGDD national URL can redirect/use the canonical locator root: `/sieu-thi-the-gioi-di-dong`
+- Geographic province/city pages are under: `/sieu-thi-the-gioi-di-dong/<province-or-city>`
+- The shared MWG crawler was deriving the geographic root from the opened URL, which did not match the canonical TGDD link root.
+
+Fix:
+- Commit `b8cf3afb0a648e22f597d2ed3e0cb821f4d2ac08`
+- Message: `Fix TGDD locator root in MWG crawler`
+- For `THE GIOI DI DONG`, the crawler now explicitly uses `/sieu-thi-the-gioi-di-dong` as the locator root.
+- DMX logic remains unchanged.
+
+Next:
+- Pull this commit locally.
+- Run syntax check.
+- Re-test TGDD direct crawler.
+- If direct crawler is correct, test TGDD in Streamlit.
+- Then apply the same inspect -> minimally fix -> direct test -> Streamlit test workflow to FPT Shop, Long Châu, Pharmacity, and Bách Hóa Xanh.
+
 ## 4. Next test after pulling
 Do NOT run Streamlit first.
 
