@@ -1469,14 +1469,6 @@ async def crawl_longchau(start_url=None):
 
     default_root = "https://nhathuoclongchau.com.vn/he-thong-cua-hang"
 
-    if start_url:
-        urls_to_visit = [start_url.rstrip("/")]
-    else:
-        urls_to_visit = [
-            f"{default_root}/{path}"
-            for path in LONGCHAU_LOCATION_PATHS
-        ]
-
     records = []
     pages = []
     logs = []
@@ -1488,6 +1480,87 @@ async def crawl_longchau(start_url=None):
             viewport={"width": 1440, "height": 1000},
             locale="vi-VN",
         )
+
+        # When Streamlit passes the national locator root,
+        # discover the current first-level province/city links
+        # from the live page. The national root itself does not
+        # contain the store list.
+        if start_url:
+            requested_url = start_url.rstrip("/")
+            requested_path = urlparse(requested_url).path.rstrip("/")
+
+            if requested_path == "/he-thong-cua-hang":
+                root_page = await context.new_page()
+
+                try:
+                    ok = await safe_goto(
+                        root_page,
+                        requested_url,
+                        wait_ms=2500,
+                    )
+
+                    if ok:
+                        pages.append(root_page.url)
+
+                        links = await get_page_links(
+                            root_page,
+                            root_page.url,
+                        )
+
+                        discovered = []
+
+                        for item in links:
+                            href = item.get("href", "")
+                            if not href:
+                                continue
+
+                            if not is_same_domain(
+                                root_page.url,
+                                href,
+                            ):
+                                continue
+
+                            path = urlparse(href).path.rstrip("/")
+
+                            if not path.startswith(
+                                "/he-thong-cua-hang/"
+                            ):
+                                continue
+
+                            relative = path[
+                                len("/he-thong-cua-hang/")
+                            ].strip("/")
+
+                            if not relative or "/" in relative:
+                                continue
+
+                            discovered.append(
+                                href.rstrip("/")
+                            )
+
+                        urls_to_visit = list(
+                            dict.fromkeys(discovered)
+                        )
+
+                        logs.append(
+                            "Long Chau discovered location links: "
+                            f"{len(urls_to_visit)}"
+                        )
+
+                    else:
+                        urls_to_visit = []
+
+                finally:
+                    await root_page.close()
+
+            else:
+                urls_to_visit = [requested_url]
+
+        else:
+            urls_to_visit = [
+                f"{default_root}/{path}"
+                for path in LONGCHAU_LOCATION_PATHS
+            ]
 
         for location_url in urls_to_visit:
             page = await context.new_page()
