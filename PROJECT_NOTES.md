@@ -119,6 +119,17 @@ Live-site findings used for this change:
 
 This is a FIRST-PASS implementation and is not marked verified yet. Local syntax/direct-crawler testing is required before treating these three brands as stable.
 
+### Long Châu first test result and fix (2026-09-30)
+The national URL `/he-thong-cua-hang` does not contain the store list itself. It is a locator landing page; the actual store list is exposed on first-level province/city pages such as `/he-thong-cua-hang/ho-chi-minh` and `/he-thong-cua-hang/ha-noi`. The first-pass crawler incorrectly treated the supplied national URL as the only page, producing 0 records.
+
+Fix commit:
+- `25772e89cdd3ef9556ceef6ad6179dc0f547db1e`
+- Message: `Fix Long Chau national locator discovery`
+
+The crawler now detects the national Long Châu locator root, discovers first-level location links from the live page, and then crawls those pages with the existing load-more logic. A custom province/city URL remains a single-page crawl.
+
+Live site verification examples: Hồ Chí Minh shows 506 stores and Hà Nội shows 311 stores on their first-level locator pages. citeturn0search1turn0search2
+
 For each brand:
 1. Read current production code from GitHub.
 2. Inspect the live official locator page and network/API behavior.
