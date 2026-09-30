@@ -498,7 +498,6 @@ async def click_load_more(
 
 # ============================================================
 # GENERIC LINK DISCOVERY# ============================================================
-
 def is_same_domain(
     base_url,
     target_url,
@@ -677,11 +676,38 @@ async def _crawl_mwg_brand(
             if path == main_path:
                 continue
 
-            if (
-                "/tinh-" not in path
-                and "/thanh-pho-" not in path
-                and "/xa-" not in path
-                and "/phuong-" not in path
+            # IMPORTANT:
+            # MWG exposes a geographic hierarchy:
+            #
+            #   main locator
+            #       -> province / city
+            #           -> district / ward / commune
+            #
+            # The province/city pages already load ALL stores
+            # through the MWG "Xem thêm" mechanism. Crawling the
+            # lower-level ward/commune links causes unnecessary
+            # deep crawling and misses stores in the aggregation.
+            #
+            # Therefore, from the national locator we only follow
+            # the first geographic level:
+            #   /tinh-...
+            #   /thanh-pho-...
+            #
+            # Do NOT add /xa- or /phuong- here unless the site's
+            # structure is re-verified first.
+
+            relative_path = path[len(main_path):].strip("/")
+
+            if not relative_path:
+                continue
+
+            # Only one path segment is allowed.
+            if "/" in relative_path:
+                continue
+
+            if not (
+                relative_path.startswith("tinh-")
+                or relative_path.startswith("thanh-pho-")
             ):
                 continue
 
@@ -997,8 +1023,7 @@ def extract_mwg_address_from_store_line(
     if not value:
         return ""
 
-    if len(value) > 500:
-        return ""
+    if len(value) > 500:        return ""
 
     normalized_value = normalize_text(value)
     padded = f" {normalized_value} "
@@ -1497,8 +1522,7 @@ async def crawl_longchau(start_url=None):
 
             if not is_same_domain(
                 start_url,
-                href,
-            ):
+                href,            ):
                 continue
 
             path = normalize_text(
@@ -1997,8 +2021,7 @@ async def crawl_bachhoaxanh(start_url=None):
         start_urls.append(start_url)
 
     start_urls.extend([
-        "https://www.bachhoaxanh.com/he-thong-sieu-thi",
-        "https://www.bachhoaxanh.com/",
+        "https://www.bachhoaxanh.com/he-thong-sieu-thi",        "https://www.bachhoaxanh.com/",
     ])
 
     records = []
