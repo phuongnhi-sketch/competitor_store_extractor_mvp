@@ -1490,70 +1490,23 @@ async def crawl_longchau(start_url=None):
             requested_path = urlparse(requested_url).path.rstrip("/")
 
             if requested_path == "/he-thong-cua-hang":
-                root_page = await context.new_page()
+                # The national locator page does not reliably expose
+                # the province/city URLs as normal <a href> elements.
+                # Use the maintained first-level location paths instead
+                # of depending on live-link discovery.
+                urls_to_visit = [
+                    f"{default_root}/{path}"
+                    for path in LONGCHAU_LOCATION_PATHS
+                ]
 
-                try:
-                    ok = await safe_goto(
-                        root_page,
-                        requested_url,
-                        wait_ms=2500,
-                    )
-
-                    if ok:
-                        pages.append(root_page.url)
-
-                        links = await get_page_links(
-                            root_page,
-                            root_page.url,
-                        )
-
-                        discovered = []
-
-                        for item in links:
-                            href = item.get("href", "")
-                            if not href:
-                                continue
-
-                            if not is_same_domain(
-                                root_page.url,
-                                href,
-                            ):
-                                continue
-
-                            path = urlparse(href).path.rstrip("/")
-
-                            if not path.startswith(
-                                "/he-thong-cua-hang/"
-                            ):
-                                continue
-
-                            relative = path[
-                                len("/he-thong-cua-hang/")
-                            ].strip("/")
-
-                            if not relative or "/" in relative:
-                                continue
-
-                            discovered.append(
-                                href.rstrip("/")
-                            )
-
-                        urls_to_visit = list(
-                            dict.fromkeys(discovered)
-                        )
-
-                        logs.append(
-                            "Long Chau discovered location links: "
-                            f"{len(urls_to_visit)}"
-                        )
-
-                    else:
-                        urls_to_visit = []
-
-                finally:
-                    await root_page.close()
+                logs.append(
+                    "Long Chau using configured location paths: "
+                    f"{len(urls_to_visit)}"
+                )
 
             else:
+                # Preserve custom URL behavior: a specific Long Chau
+                # location URL is crawled directly and is not expanded.
                 urls_to_visit = [requested_url]
 
         else:
