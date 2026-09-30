@@ -23,6 +23,14 @@ KFC has a separate dedicated crawler and should not be changed while working on 
 
 ## 3. Current MWG work: THE GIOI DI DONG + DIEN MAY XANH
 
+### Current status (2026-09-30)
+- THE GIOI DI DONG: STABLE / VERIFIED in Streamlit.
+- DIEN MAY XANH: STABLE / VERIFIED in Streamlit.
+- Do not modify the verified MWG load-more, hierarchy filtering, or parser unless a new issue is explicitly demonstrated.
+- TGDD trailing-slash input from Streamlit was fixed by normalizing start_url before calling _crawl_mwg_brand().
+- TGDD default locator URL was also normalized to avoid the trailing-slash variant.
+- Fix commits: 58f8a87337f28d42ba89d4f5fba4dbe04fbc7dfc and 0f5464ae4ae3a41268be2650e420364bcfedc099.
+
 The MWG crawler is in `brands/retail.py`.
 
 Important functions:
@@ -138,7 +146,49 @@ Next:
 - If direct crawler is correct, test TGDD in Streamlit.
 - Then apply the same inspect -> minimally fix -> direct test -> Streamlit test workflow to FPT Shop, Long Châu, Pharmacity, and Bách Hóa Xanh.
 
-## 4. Next test after pulling
+## 4. BÁCH HÓA XANH — CURRENT STATUS / INVESTIGATION
+
+### Current status (2026-09-30)
+Bách Hóa Xanh is NOT verified yet.
+
+The dedicated crawler was changed to a locator-page approach in commit:
+- 58f8a87337f28d42ba89d4f5fba4dbe04fbc7dfc
+- Message: Fix TGDD trailing slash and simplify BHX locator crawl
+
+Current Streamlit test:
+- Input URL: https://www.bachhoaxanh.com/he-thong-sieu-thi
+- The site redirected/opened as: https://www.bachhoaxanh.com/he-thong-cua-hang
+- Crawled pages: 1
+- Parsed records before local dedupe: 6
+- Records after local dedupe: 6
+
+This is clearly incomplete. The crawler is currently only seeing a small number of locator-page records.
+
+### Important finding
+Do NOT assume the BHX website has the same DOM/load-more implementation as MWG.
+The current BHX implementation uses the generic click_load_more() helper and parses visible page text. This produced only 6 records, so the next step is to inspect the actual BHX locator DOM/network behavior and identify how the full store list is loaded.
+
+Possible investigation areas:
+- Store cards rendered by JavaScript.
+- API/XHR endpoint supplying store data.
+- Map/store-list data embedded in page JavaScript.
+- Pagination or load-more mechanism not matched by the generic helper.
+- Province/city locator hierarchy if present.
+
+### BHX rule
+Do NOT fix the 6-record result by changing generic dedupe.
+Do NOT replace the parser with a generic crawler just to return more rows.
+Inspect the actual BHX locator page first, then make the smallest dedicated BHX change.
+
+### Next BHX workflow
+1. Direct crawler test outside Streamlit.
+2. Inspect actual BHX page DOM and/or network/API source.
+3. Identify the complete store-data source.
+4. Implement dedicated BHX extraction/load-more logic.
+5. Test total records and duplicate addresses.
+6. Test Streamlit.
+7. Update this section with verified results.
+## 5. Next test after pulling
 Do NOT run Streamlit first.
 
 Run:
@@ -161,18 +211,18 @@ Expected direction:
 
 The exact final total must be verified from the live site; do not invent an expected number.
 
-## 5. Important project history
+## 6. Important project history
 There were previous accidental structural corruptions of `brands/retail.py` caused by partial/manual edits. The file was restored from a stable commit before reapplying the MWG parser changes.
 
 Because of that history, protect the existing working code and make small, targeted changes only.
 
-## 6. Other known working pieces
+## 7. Other known working pieces
 - Retail domain detection was added to `crawler.py` for the six target retail brands.
 - Streamlit correctly dispatches these brands to dedicated retail crawlers.
 - KFC uses its separate dedicated crawler.
 - Lotteria custom URL routing was previously fixed; do not change unrelated routing while working on MWG.
 
-## 7. Testing philosophy
+## 8. Testing philosophy
 Always test in this order:
 1. Python syntax
 2. direct dedicated crawler
