@@ -105,6 +105,20 @@ Do not replace this API crawler with the old locator-text parser or generic clic
 2. PHARMACITY
 3. FPT SHOP
 
+### Current first-pass code update (2026-09-30)
+Commit:
+- `b9d30df74e50a97578f661f711c9b6966e6e4b21`
+- Message: `Update Long Chau Pharmacity and FPT nationwide locators`
+
+Live-site findings used for this change:
+- Long Châu exposes first-level province/city locator routes such as `/he-thong-cua-hang/ho-chi-minh`, `/he-thong-cua-hang/ha-noi`, and `/he-thong-cua-hang/tinh-cao-bang`; province/city pages show a store count and support `Xem thêm nhà thuốc`.
+- Pharmacity exposes first-level routes such as `/he-thong-cua-hang/thanh-pho-ha-noi` and `/he-thong-cua-hang/tinh-thanh-hoa`; pages expose store lists.
+- FPT Shop exposes first-level routes such as `/cua-hang/ha-noi`, `/cua-hang/hue`, and `/cua-hang/tinh-cao-bang`; pages expose store cards and `Xem thêm cửa hàng`.
+- The production crawlers now use explicit first-level location URL lists when no custom URL is supplied. A supplied custom URL is still crawled by itself.
+- FPT now parses province/city locator store-card text directly instead of opening every individual store detail page.
+
+This is a FIRST-PASS implementation and is not marked verified yet. Local syntax/direct-crawler testing is required before treating these three brands as stable.
+
 For each brand:
 1. Read current production code from GitHub.
 2. Inspect the live official locator page and network/API behavior.
