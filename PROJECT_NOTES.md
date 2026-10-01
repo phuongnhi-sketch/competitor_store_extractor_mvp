@@ -215,3 +215,36 @@ Verification status:
 - The API structure and pagination behavior were verified from the live Long Châu network trace during debugging.
 - The production code was updated directly on `main`.
 - Full local `py_compile` / direct crawler execution could not be run from this environment because the runtime cannot reach GitHub to pull the updated file. Local verification remains required before marking Long Châu as STABLE.
+
+
+### Long Châu Cloudflare / API lesson (2026-10-01)
+
+Important reusable rule for future retail crawlers:
+
+- A browser page being able to call an API does **not** mean that Python/Playwright's standalone HTTP request can call the same API.
+- During Long Châu testing, the official page's real XHR POST to `https://api.nhathuoclongchau.com.vn/lccus/ecom-prod/store-front/v3/order-promising/location-slug/list-shop` returned HTTP 200.
+- The same API called with `page.request.post()` returned HTTP 403 Cloudflare.
+- An earlier synthetic `fetch()` from `page.evaluate()` failed with `TypeError: Failed to fetch`.
+- Therefore, when a site has Cloudflare / bot protection, prefer this investigation order:
+  1. Open the official page in Playwright.
+  2. Use DevTools/network tracing to identify the real browser request.
+  3. Let the website trigger that request itself.
+  4. Capture the real response with Playwright `page.expect_response()` / response listeners.
+  5. Parse the captured JSON.
+  6. Only use `page.request`, `requests`, or synthetic `fetch()` if a live test proves the site accepts them.
+- Do not weaken or bypass Cloudflare. The goal is to reproduce the site's normal browser flow and capture data already delivered to the page.
+
+Long Châu production direction:
+- The current crawler now opens the real Long Châu province/city page, reloads it, captures the site's own store-list XHR response, then clicks the real 'Xem thêm nhà thuốc' control and captures each subsequent XHR response.
+- API JSON is parsed from those real browser responses.
+- The synthetic `page.request.post()` approach is removed.
+- The existing API field mapping and local dedupe are preserved.
+- This approach should be reused as a pattern for other protected retail sites if they expose data through browser XHR but block synthetic HTTP requests.
+
+Brand investigation playbook:
+- MWG (THE GIOI DI DONG / DIEN MAY XANH): use verified locator-page DOM + real 'Xem thêm' flow; do not replace with synthetic API calls unless a new live test requires it.
+- BÁCH HÓA XANH: verified browser-context API flow; direct HTTP requests may return 403, so keep the existing browser-session/API approach.
+- LONG CHÂU: protected browser-XHR pattern above; capture the site's real requests instead of generating standalone API requests.
+- FPT SHOP: current first-level locator-page/store-card parser; inspect live DOM/network again before changing it.
+- PHARMACITY: current first-level locator-page + load-more parser; inspect live DOM/network again before changing it.
+- KFC: separate dedicated crawler; do not change while debugging retail brands.
