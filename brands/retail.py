@@ -1852,6 +1852,15 @@ async def crawl_longchau(start_url=None):
 
                 location_slug = path_parts[-1]
 
+                # The first visible batch can already be rendered in
+                # the page without a capturable store-list XHR. Parse
+                # that initial batch before triggering "Xem thêm".
+                initial_text = await get_body_text(page)
+                initial_records = parse_longchau_text(
+                    initial_text,
+                    opened_url,
+                )
+
                 api_payloads = await collect_longchau_api_items(
                     page,
                     max_clicks=200,
@@ -1876,11 +1885,13 @@ async def crawl_longchau(start_url=None):
 
                 api_pages = len(api_payloads)
 
+                records.extend(initial_records)
                 records.extend(location_records)
 
                 logs.append(
                     f"Long Chau {opened_url}: "
-                    f"{len(location_records)} records | "
+                    f"initial DOM={len(initial_records)} records | "
+                    f"API={len(location_records)} records | "
                     f"API total={total_count} | "
                     f"API pages={api_pages}"
                 )
