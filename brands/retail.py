@@ -2116,7 +2116,7 @@ def parse_longchau_text(
 
         if ward_match:
             ward = clean_text(
-                ward_match.group(0)
+                ward_match.group(2)
             )
 
         phone = extract_phone(line)
