@@ -1459,12 +1459,75 @@ def parse_fpt_locator_text(
 # LONG CHÂU
 # ============================================================
 
+async def click_longchau_load_more(page, max_clicks=200):
+    """
+    Long Châu-specific load-more handler.
+
+    Long Châu exposes the current store cards first and then a
+    "Xem thêm nhà thuốc" control. Keep this separate from the
+    shared retail helper so other brands are not affected.
+    """
+    for _ in range(max_clicks):
+        try:
+            # Prefer buttons whose visible text identifies the
+            # Long Châu store-list action.
+            candidates = [
+                page.get_by_role(
+                    "button",
+                    name=re.compile(
+                        r"Xem thêm nhà thuốc",
+                        re.I,
+                    ),
+                ).first,
+                page.get_by_text(
+                    "Xem thêm nhà thuốc",
+                    exact=True,
+                ).first,
+                page.locator(
+                    "button:has-text('Xem thêm nhà thuốc')"
+                ).first,
+                page.locator(
+                    "a:has-text('Xem thêm nhà thuốc')"
+                ).first,
+            ]
+
+            clicked = False
+
+            for button in candidates:
+                try:
+                    if not await button.is_visible(timeout=500):
+                        continue
+
+                    await button.scroll_into_view_if_needed(
+                        timeout=2000
+                    )
+                    await button.click(timeout=3000)
+                    await page.wait_for_timeout(800)
+
+                    clicked = True
+                    break
+
+                except Exception:
+                    continue
+
+            if not clicked:
+                break
+
+        except Exception:
+            break
+
+
 async def crawl_longchau(start_url=None):
     """
-    Crawl Long Châu nationwide using the current first-level
+    Crawl Long Châu using the current first-level
     province/city locator URLs.
 
-    If a custom start_url is supplied, only that URL is crawled.
+    The national URL expands to the maintained 34 province/city
+    URLs. Each province/city page is then fully expanded through
+    Long Châu's own "Xem thêm nhà thuốc" control.
+
+    If a specific Long Châu location URL is supplied, only that
+    location URL is crawled.
     """
 
     default_root = "https://nhathuoclongchau.com.vn/he-thong-cua-hang"
@@ -1481,19 +1544,11 @@ async def crawl_longchau(start_url=None):
             locale="vi-VN",
         )
 
-        # When Streamlit passes the national locator root,
-        # discover the current first-level province/city links
-        # from the live page. The national root itself does not
-        # contain the store list.
         if start_url:
             requested_url = start_url.rstrip("/")
             requested_path = urlparse(requested_url).path.rstrip("/")
 
             if requested_path == "/he-thong-cua-hang":
-                # The national locator page does not reliably expose
-                # the province/city URLs as normal <a href> elements.
-                # Use the maintained first-level location paths instead
-                # of depending on live-link discovery.
                 urls_to_visit = [
                     f"{default_root}/{path}"
                     for path in LONGCHAU_LOCATION_PATHS
@@ -1503,12 +1558,8 @@ async def crawl_longchau(start_url=None):
                     "Long Chau using configured location paths: "
                     f"{len(urls_to_visit)}"
                 )
-
             else:
-                # Preserve custom URL behavior: a specific Long Chau
-                # location URL is crawled directly and is not expanded.
                 urls_to_visit = [requested_url]
-
         else:
             urls_to_visit = [
                 f"{default_root}/{path}"
@@ -1522,7 +1573,7 @@ async def crawl_longchau(start_url=None):
                 ok = await safe_goto(
                     page,
                     location_url,
-                    wait_ms=2200,
+                    wait_ms=2500,
                 )
 
                 if not ok:
@@ -1534,9 +1585,11 @@ async def crawl_longchau(start_url=None):
                 opened_url = page.url
                 pages.append(opened_url)
 
-                await click_load_more(
+                # Long Châu has its own load-more behavior.
+                # Do not use the shared retail helper here.
+                await click_longchau_load_more(
                     page,
-                    max_clicks=100,
+                    max_clicks=200,
                 )
 
                 text = await get_body_text(page)
@@ -1581,15 +1634,14 @@ def parse_longchau_text(
     """
     Parse Long Châu province/city locator pages.
 
-    Current Long Châu pages expose the store list as:
+    Current Long Châu pages expose:
         Có X nhà thuốc tại <province>
-        <store address>
-        Địa chỉ cũ: ...
+        <current store address>
+        Địa chỉ cũ: <historical address>
         ...
         Xem thêm nhà thuốc
 
-    The store address itself is the store-level record. Old-address
-    lines are deliberately ignored.
+    Only the current address line becomes a store record.
     """
 
     records = []
@@ -1603,18 +1655,15 @@ def parse_longchau_text(
     province = ""
 
     # --------------------------------------------------------
-    # Current province/city heading
+    # Province/city heading
     # --------------------------------------------------------
     for line in lines:
         normalized = normalize_text(line)
 
-        match = re.match(
-            r"^co\s+\d+\s+nha thuoc tai\s+(.+)$",
+        if re.match(
+            r"^co\s+\d+\s+nha thuoc tai\s+",
             normalized,
-        )
-
-        if match:
-            # Keep the original accented text from the source line.
+        ):
             province = re.sub(
                 r"^co\s+\d+\s+nha thuoc tai\s+",
                 "",
@@ -1624,20 +1673,31 @@ def parse_longchau_text(
             break
 
     # --------------------------------------------------------
-    # Parse store address lines.
+    # Parse current store addresses.
     #
-    # Current pages use short address lines such as:
-    #   248 Hồ Văn Cống, P. Chánh Hiệp, TP. Hồ Chí Minh
-    #   A17 Đường HL5, X. Long Hải, TP. Hồ Chí Minh
+    # The live page currently renders examples such as:
+    #   118 Đường 35-CL, ..., P. Cát Lái, TP. Hồ Chí Minh
+    #   75/12 Nguyễn Cửu Vân, P. Gia Định, Hồ Chí Minh
     #
-    # extract_address() is intentionally conservative, but the
-    # Long Châu locator has a few abbreviated address forms that
-    # should be accepted explicitly here.
+    # We deliberately do NOT use the shared extract_address()
+    # as the primary gate because Long Châu has abbreviated
+    # location formats and its rendered text can vary.
     # --------------------------------------------------------
     for line in lines:
         normalized = normalize_text(line)
 
-        # Stop/skip page UI and non-store content.
+        if not line:
+            continue
+
+        if normalized.startswith("dia chi cu"):
+            continue
+
+        if re.match(
+            r"^co\s+\d+\s+nha thuoc tai\s+",
+            normalized,
+        ):
+            continue
+
         if any(
             phrase in normalized
             for phrase in [
@@ -1658,47 +1718,45 @@ def parse_longchau_text(
         ):
             continue
 
-        # Never treat historical addresses as current stores.
-        if normalized.startswith("dia chi cu"):
-            continue
+        # A current Long Châu store line has a comma-separated
+        # address followed by a current administrative marker.
+        # Accept both abbreviated and full Vietnamese forms.
+        has_current_location = re.search(
+            r",\s*(?:P\.|X\.|Phường|Xã|Quận|Huyện|"
+            r"TP\.|Tỉnh|Thành phố|Thị trấn)\b",
+            line,
+            flags=re.I,
+        )
 
-        # The province heading is context, not a store.
-        if re.match(
-            r"^co\s+\d+\s+nha thuoc tai\s+",
-            normalized,
+        # Also accept lines containing an explicit street marker
+        # plus a comma. This covers province pages whose current
+        # administrative text is rendered slightly differently.
+        has_street_address = (
+            "," in line
+            and re.search(
+                r"\b(?:Đường|Đ\.|DT\d+|QL\d+)\b",
+                line,
+                flags=re.I,
+            )
+        )
+
+        if not (
+            has_current_location
+            or has_street_address
         ):
             continue
 
-        # Current Long Châu store lines normally contain one of
-        # these location markers. Keep the generic address parser
-        # as a fallback for older page formats.
-        has_longchau_location_marker = any(
-            marker in normalized
-            for marker in [
-                " p. ",
-                " x. ",
-                "tp. ",
-                " phuong ",
-                " xa ",
-                " thanh pho ",
-                " tinh ",
-                " quan ",
-                " huyen ",
-                " duong ",
-            ]
-        )
-
-        address = (
-            extract_address(line)
-            if has_longchau_location_marker
-            else ""
-        )
-
-        if not address:
+        # Exclude obvious non-address content.
+        if len(line) < 8 or len(line) > 500:
             continue
 
-        # Derive ward from THIS store line, not from the last
-        # address encountered on the page.
+        # Do not accidentally pick telephone/footer text.
+        if (
+            not re.search(r"[A-Za-zÀ-ỹĐđ]", line)
+            or "@" in line
+        ):
+            continue
+
         ward = ""
         ward_match = re.search(
             r"(?:^|,\s*)(P\.|X\.|Phường|Xã)\s+([^,]+)",
@@ -1717,7 +1775,7 @@ def parse_longchau_text(
             make_record(
                 brand="NHA THUOC LONG CHAU",
                 store_name="Nhà thuốc Long Châu",
-                address=address,
+                address=line,
                 province=province,
                 ward=ward,
                 phone=phone,
