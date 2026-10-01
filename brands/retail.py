@@ -1529,12 +1529,15 @@ async def collect_longchau_api_items(page, max_clicks=200):
     """
     Capture Long Châu's real browser XHR responses.
 
-    Do not call the store API with page.request.post() or a manual
-    fetch() from the page. Long Châu's Cloudflare layer may return
-    HTTP 403 for those synthetic requests.
-
-    The website itself successfully sends the POST request. We let
-    the page make that request and capture its JSON response.
+    Important:
+    - The first 5 stores on the locator page can already be rendered
+      by the page without an XHR that we can capture.
+    - The real XHR is triggered by the website when clicking
+      "Xem thêm nhà thuốc", starting with skipCount=5.
+    - Therefore we must NOT require an initial API response after reload.
+    - Synthetic page.request.post() / page.evaluate(fetch()) calls are
+      intentionally not used because Long Châu's Cloudflare layer can
+      return HTTP 403 / Failed to fetch for those requests.
     """
     def is_store_api_response(response):
         return (
@@ -1542,138 +1545,185 @@ async def collect_longchau_api_items(page, max_clicks=200):
             and response.url.split("?", 1)[0] == LONGCHAU_STORE_API
         )
 
-    api_payloads = []
+    captured_payloads = []
 
-    # Reload so the initial store-list request is captured by us.
-    try:
-        async with page.expect_response(
-            is_store_api_response,
-            timeout=15000,
-        ) as response_info:
-            await page.reload(
-                wait_until="domcontentloaded",
-                timeout=60000,
-            )
-
-        response = await response_info.value
-        api_payloads.append(await response.json())
-
-    except Exception as e:
-        raise RuntimeError(
-            "Long Chau initial store-list response was not captured: "
-            f"{type(e).__name__}: {e}"
-        )
-
-    total_count = None
-    seen_skip_counts = set()
-
-    def add_payload(payload):
-        nonlocal total_count
-
-        if not isinstance(payload, dict):
+    async def capture_response(response):
+        if not is_store_api_response(response):
             return
 
-        if total_count is None:
-            total_count = payload.get("totalCount")
+        try:
+            payload = await response.json()
+        except Exception:
+            return
 
-        # The page can emit the same response more than once.
-        skip_count = None
-        request_payload = payload.get("_requestPayload")
+        if isinstance(payload, dict):
+            captured_payloads.append(payload)
 
-        if isinstance(request_payload, dict):
-            skip_count = request_payload.get("skipCount")
-
-        if skip_count is not None:
-            if skip_count in seen_skip_counts:
-                return
-            seen_skip_counts.add(skip_count)
-
-    # The initial response is always useful even when its request
-    # metadata cannot be attached to the JSON payload.
-    initial_payload = api_payloads[0]
+    page.on("response", capture_response)
 
     try:
-        total_count = initial_payload.get("totalCount")
-    except Exception:
-        total_count = None
+        # Reload only to give the page a clean browser flow.
+        # Do not wait for a mandatory initial API response.
+        await page.reload(
+            wait_until="domcontentloaded",
+            timeout=60000,
+        )
 
-    results = [initial_payload]
+        # Give browser-side XHR a short window to complete if the page
+        # happens to request the store API during reload.
+        await page.wait_for_timeout(2500)
 
-    received = len(initial_payload.get("items") or [])
-    skip_count = received
+        results = list(captured_payloads)
 
-    for _ in range(max_clicks):
-        if (
-            total_count is not None
-            and skip_count >= int(total_count)
-        ):
-            break
+        # Keep a simple item-level dedupe because the browser can emit
+        # the same response more than once.
+        seen_codes = set()
 
-        candidates = [
-            page.get_by_role(
-                "button",
-                name=re.compile(
-                    r"Xem thêm nhà thuốc",
-                    re.I,
-                ),
-            ).first,
-            page.get_by_text(
-                "Xem thêm nhà thuốc",
-                exact=True,
-            ).first,
-            page.locator(
-                "button:has-text('Xem thêm nhà thuốc')"
-            ).first,
-            page.locator(
-                "a:has-text('Xem thêm nhà thuốc')"
-            ).first,
-        ]
+        def add_unique_payloads(payloads):
+            unique_payloads = []
 
-        clicked = False
-
-        for button in candidates:
-            try:
-                if not await button.is_visible(timeout=500):
-                    continue
-
-                await button.scroll_into_view_if_needed(
-                    timeout=2000
-                )
-
-                async with page.expect_response(
-                    is_store_api_response,
-                    timeout=15000,
-                ) as response_info:
-                    await button.click(timeout=3000)
-
-                response = await response_info.value
-                payload = await response.json()
-
+            for payload in payloads:
                 if not isinstance(payload, dict):
-                    break
+                    continue
 
                 items = payload.get("items") or []
                 if not items:
-                    break
+                    continue
 
-                results.append(payload)
-                received = len(items)
+                new_items = []
 
-                if total_count is None:
-                    total_count = payload.get("totalCount")
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
 
-                skip_count += received
-                clicked = True
+                    code = clean_text(
+                        item.get("shopCode") or ""
+                    )
+
+                    if code:
+                        if code in seen_codes:
+                            continue
+                        seen_codes.add(code)
+
+                    new_items.append(item)
+
+                if new_items:
+                    normalized = dict(payload)
+                    normalized["items"] = new_items
+                    unique_payloads.append(normalized)
+
+            return unique_payloads
+
+        results = add_unique_payloads(results)
+
+        total_count = None
+
+        for payload in results:
+            value = payload.get("totalCount")
+            if value is not None:
+                total_count = value
                 break
 
-            except Exception:
-                continue
+        # The page normally starts with 5 rendered stores and the first
+        # XHR after clicking "Xem thêm" uses skipCount=5. We track the
+        # number of API items captured rather than assuming that an
+        # initial API response exists.
+        api_item_count = sum(
+            len(payload.get("items") or [])
+            for payload in results
+        )
 
-        if not clicked:
-            break
+        for _ in range(max_clicks):
+            if (
+                total_count is not None
+                and api_item_count >= int(total_count)
+            ):
+                break
 
-    return results
+            candidates = [
+                page.get_by_role(
+                    "button",
+                    name=re.compile(
+                        r"Xem thêm nhà thuốc",
+                        re.I,
+                    ),
+                ).first,
+                page.get_by_text(
+                    "Xem thêm nhà thuốc",
+                    exact=True,
+                ).first,
+                page.locator(
+                    "button:has-text('Xem thêm nhà thuốc')"
+                ).first,
+                page.locator(
+                    "a:has-text('Xem thêm nhà thuốc')"
+                ).first,
+            ]
 
+            clicked = False
+
+            for button in candidates:
+                try:
+                    if not await button.is_visible(timeout=500):
+                        continue
+
+                    await button.scroll_into_view_if_needed(
+                        timeout=2000
+                    )
+
+                    before_payload_count = len(
+                        captured_payloads
+                    )
+
+                    await button.click(timeout=3000)
+
+                    # Wait for the real browser XHR to arrive.
+                    for _wait in range(30):
+                        if len(captured_payloads) > before_payload_count:
+                            break
+                        await page.wait_for_timeout(500)
+
+                    new_payloads = captured_payloads[
+                        before_payload_count:
+                    ]
+
+                    unique_new = add_unique_payloads(
+                        new_payloads
+                    )
+
+                    if not unique_new:
+                        break
+
+                    for payload in unique_new:
+                        results.append(payload)
+
+                        items = payload.get("items") or []
+                        api_item_count += len(items)
+
+                        if total_count is None:
+                            value = payload.get("totalCount")
+                            if value is not None:
+                                total_count = value
+
+                    clicked = True
+                    break
+
+                except Exception:
+                    continue
+
+            if not clicked:
+                break
+
+        return results
+
+    finally:
+        try:
+            page.remove_listener(
+                "response",
+                capture_response,
+            )
+        except Exception:
+            pass
 
 def parse_longchau_api_item(item, source_url):
     """Convert one Long Châu API store item to a standard record."""
