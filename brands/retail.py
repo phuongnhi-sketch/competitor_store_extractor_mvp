@@ -1525,39 +1525,154 @@ LONGCHAU_STORE_API = (
 )
 
 
-async def fetch_longchau_api_page(
-    page,
-    location_slug,
-    skip_count,
-    max_result=50,
-):
-    """Fetch one Long Châu store-list API page via Playwright request."""
-    payload = {
-        "locationSlug": location_slug,
-        "maxResult": max_result,
-        "skipCount": skip_count,
-    }
+async def collect_longchau_api_items(page, max_clicks=200):
+    """
+    Capture Long Châu's real browser XHR responses.
 
-    response = await page.request.post(
-        LONGCHAU_STORE_API,
-        data=payload,
-        headers={
-            "accept": "application/json, text/plain, */*",
-            "content-type": "application/json",
-            "order-channel": "1",
-            "origin": "https://nhathuoclongchau.com.vn",
-            "referer": "https://nhathuoclongchau.com.vn/",
-            "x-channel": "EStore",
-        },
-    )
+    Do not call the store API with page.request.post() or a manual
+    fetch() from the page. Long Châu's Cloudflare layer may return
+    HTTP 403 for those synthetic requests.
 
-    if not response.ok:
-        raise RuntimeError(
-            f"Long Chau API HTTP {response.status}: "
-            f"{await response.text()}"
+    The website itself successfully sends the POST request. We let
+    the page make that request and capture its JSON response.
+    """
+    def is_store_api_response(response):
+        return (
+            response.request.method == "POST"
+            and response.url.split("?", 1)[0] == LONGCHAU_STORE_API
         )
 
-    return await response.json()
+    api_payloads = []
+
+    # Reload so the initial store-list request is captured by us.
+    try:
+        async with page.expect_response(
+            is_store_api_response,
+            timeout=15000,
+        ) as response_info:
+            await page.reload(
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+
+        response = await response_info.value
+        api_payloads.append(await response.json())
+
+    except Exception as e:
+        raise RuntimeError(
+            "Long Chau initial store-list response was not captured: "
+            f"{type(e).__name__}: {e}"
+        )
+
+    total_count = None
+    seen_skip_counts = set()
+
+    def add_payload(payload):
+        nonlocal total_count
+
+        if not isinstance(payload, dict):
+            return
+
+        if total_count is None:
+            total_count = payload.get("totalCount")
+
+        # The page can emit the same response more than once.
+        skip_count = None
+        request_payload = payload.get("_requestPayload")
+
+        if isinstance(request_payload, dict):
+            skip_count = request_payload.get("skipCount")
+
+        if skip_count is not None:
+            if skip_count in seen_skip_counts:
+                return
+            seen_skip_counts.add(skip_count)
+
+    # The initial response is always useful even when its request
+    # metadata cannot be attached to the JSON payload.
+    initial_payload = api_payloads[0]
+
+    try:
+        total_count = initial_payload.get("totalCount")
+    except Exception:
+        total_count = None
+
+    results = [initial_payload]
+
+    received = len(initial_payload.get("items") or [])
+    skip_count = received
+
+    for _ in range(max_clicks):
+        if (
+            total_count is not None
+            and skip_count >= int(total_count)
+        ):
+            break
+
+        candidates = [
+            page.get_by_role(
+                "button",
+                name=re.compile(
+                    r"Xem thêm nhà thuốc",
+                    re.I,
+                ),
+            ).first,
+            page.get_by_text(
+                "Xem thêm nhà thuốc",
+                exact=True,
+            ).first,
+            page.locator(
+                "button:has-text('Xem thêm nhà thuốc')"
+            ).first,
+            page.locator(
+                "a:has-text('Xem thêm nhà thuốc')"
+            ).first,
+        ]
+
+        clicked = False
+
+        for button in candidates:
+            try:
+                if not await button.is_visible(timeout=500):
+                    continue
+
+                await button.scroll_into_view_if_needed(
+                    timeout=2000
+                )
+
+                async with page.expect_response(
+                    is_store_api_response,
+                    timeout=15000,
+                ) as response_info:
+                    await button.click(timeout=3000)
+
+                response = await response_info.value
+                payload = await response.json()
+
+                if not isinstance(payload, dict):
+                    break
+
+                items = payload.get("items") or []
+                if not items:
+                    break
+
+                results.append(payload)
+                received = len(items)
+
+                if total_count is None:
+                    total_count = payload.get("totalCount")
+
+                skip_count += received
+                clicked = True
+                break
+
+            except Exception:
+                continue
+
+        if not clicked:
+            break
+
+    return results
 
 
 def parse_longchau_api_item(item, source_url):
@@ -1687,29 +1802,15 @@ async def crawl_longchau(start_url=None):
 
                 location_slug = path_parts[-1]
 
-                skip_count = 0
-                total_count = None
+                api_payloads = await collect_longchau_api_items(
+                    page,
+                    max_clicks=200,
+                )
+
                 location_records = []
-                api_pages = 0
 
-                while True:
-                    data = await fetch_longchau_api_page(
-                        page,
-                        location_slug,
-                        skip_count,
-                        max_result=50,
-                    )
-
-                    items = data.get("items") or []
-
-                    if total_count is None:
-                        total_count = data.get(
-                            "totalCount"
-                        )
-
-                    api_pages += 1
-
-                    for item in items:
+                for data in api_payloads:
+                    for item in data.get("items") or []:
                         location_records.append(
                             parse_longchau_api_item(
                                 item,
@@ -1717,21 +1818,13 @@ async def crawl_longchau(start_url=None):
                             )
                         )
 
-                    received = len(items)
+                total_count = None
+                if api_payloads:
+                    total_count = api_payloads[0].get(
+                        "totalCount"
+                    )
 
-                    if received == 0:
-                        break
-
-                    skip_count += received
-
-                    if (
-                        total_count is not None
-                        and skip_count >= total_count
-                    ):
-                        break
-
-                    if received < 50:
-                        break
+                api_pages = len(api_payloads)
 
                 records.extend(location_records)
 
