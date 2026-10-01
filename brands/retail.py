@@ -2005,14 +2005,6 @@ async def crawl_longchau(start_url=None):
         await browser.close()
 
     records = dedupe_records_local(records)
-
-        finally:
-            await page.close()
-
-        await browser.close()
-
-    records = dedupe_records_local(records)
-
     logs.append(
         f"Parsed Long Chau records after local dedupe: "
         f"{len(records)}"
