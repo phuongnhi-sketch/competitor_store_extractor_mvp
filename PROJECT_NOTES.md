@@ -275,3 +275,35 @@ Brand investigation playbook:
 - FPT SHOP: current first-level locator-page/store-card parser; inspect live DOM/network again before changing it.
 - PHARMACITY: current first-level locator-page + load-more parser; inspect live DOM/network again before changing it.
 - KFC: separate dedicated crawler; do not change while debugging retail brands.
+
+### Long Châu production verification (2026-10-01)
+
+Latest verified local test:
+- Commit: `9f285ee5254ef1967484e25f0adabe56c0fa96ae`
+- Change: Long Châu runs Chromium in headed mode (`headless=False`) because the same URL was blocked by Cloudflare in headless mode but loaded normally in headed mode.
+- Headed browser test confirmed the real locator page loads with 505 stores and the "Xem thêm nhà thuốc" control.
+
+Latest production crawl test:
+- Commit: `3d9585eca1123db475fc6925c0569ba285a6cc2a`
+- Result for Hồ Chí Minh:
+  - Total records: 505
+  - Initial DOM: 5
+  - API records: 500
+  - API total: 505
+  - API pages: 100
+  - Local dedupe result: 505
+  - Real browser XHR responses: HTTP 200
+- The production crawler no longer reloads the Long Châu page inside the API collector. It keeps the already-open browser session to avoid triggering Cloudflare again.
+- The parser now extracts Province as `Hồ Chí Minh` instead of the full heading and recognizes the current abbreviated administrative address formats.
+
+Latest small parser cleanup:
+- Commit: `9813a526d515c67a9bb674c9b0ad3a7c86c0cf66`
+- Change: Long Châu Ward now stores only the matched ward text (for example `P. Chánh Hiệp`) instead of including the leading comma.
+- No crawler/API logic was changed by this cleanup.
+
+Current Long Châu status:
+- Core crawl flow is working for the tested Hồ Chí Minh location.
+- Cloudflare requires headed Chromium in the current environment.
+- Before marking Long Châu STABLE, run `python -m py_compile brands\\retail.py` and a direct production test after pulling the latest commit.
+- Do not change other retail crawlers based on Long Châu findings.
+
