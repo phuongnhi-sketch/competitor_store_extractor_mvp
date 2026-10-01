@@ -1990,14 +1990,21 @@ async def crawl_longchau(start_url=None):
                         f"API pages={api_pages}"
                     )
 
-            except Exception as e:
-                logs.append(
-                    f"Long Chau error: {location_url} | "
-                    f"{type(e).__name__}: {e}"
-                )
+                except Exception as e:
+                    logs.append(
+                        f"Long Chau error: {location_url} | "
+                        f"{type(e).__name__}: {e}"
+                    )
 
-            finally:
-                await page.wait_for_timeout(1500)
+                finally:
+                    await page.wait_for_timeout(1500)
+
+        finally:
+            await page.close()
+
+        await browser.close()
+
+    records = dedupe_records_local(records)
 
         finally:
             await page.close()
