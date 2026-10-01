@@ -1852,10 +1852,50 @@ async def crawl_longchau(start_url=None):
 
                 location_slug = path_parts[-1]
 
+                # DEBUG: inspect exactly what the browser sees before
+                # changing the parser/API strategy further.
+                try:
+                    debug_title = await page.title()
+                except Exception:
+                    debug_title = ""
+
+                try:
+                    debug_body = await page.locator(
+                        "body"
+                    ).inner_text()
+                except Exception:
+                    debug_body = ""
+
+                debug_body_clean = clean_text(debug_body)
+
+                try:
+                    debug_more_count = await page.get_by_text(
+                        "Xem thêm nhà thuốc",
+                        exact=True,
+                    ).count()
+                except Exception:
+                    debug_more_count = 0
+
+                debug_api_urls = []
+                debug_api_statuses = []
+
+                def debug_response(response):
+                    try:
+                        url = response.url.split("?", 1)[0]
+                        if "list-shop" in url:
+                            debug_api_urls.append(url)
+                            debug_api_statuses.append(
+                                f"{response.request.method} {response.status} {url}"
+                            )
+                    except Exception:
+                        pass
+
+                page.on("response", debug_response)
+
                 # The first visible batch can already be rendered in
                 # the page without a capturable store-list XHR. Parse
                 # that initial batch before triggering "Xem thêm".
-                initial_text = await get_body_text(page)
+                initial_text = debug_body
                 initial_records = parse_longchau_text(
                     initial_text,
                     opened_url,
@@ -1864,6 +1904,31 @@ async def crawl_longchau(start_url=None):
                 api_payloads = await collect_longchau_api_items(
                     page,
                     max_clicks=200,
+                )
+
+                page.remove_listener(
+                    "response",
+                    debug_response,
+                )
+
+                debug_preview = debug_body_clean[:1500]
+
+                logs.append(
+                    f"Long Chau DEBUG title={debug_title!r} | "
+                    f"body_chars={len(debug_body_clean)} | "
+                    f"more_button_count={debug_more_count} | "
+                    f"list_shop_responses={len(debug_api_statuses)}"
+                )
+
+                if debug_api_statuses:
+                    logs.append(
+                        "Long Chau DEBUG API responses: "
+                        + " || ".join(debug_api_statuses[:10])
+                    )
+
+                logs.append(
+                    "Long Chau DEBUG body preview: "
+                    + debug_preview.replace("\n", " | ")
                 )
 
                 location_records = []
