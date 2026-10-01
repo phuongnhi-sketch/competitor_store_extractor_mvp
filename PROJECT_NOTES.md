@@ -162,3 +162,56 @@ Do not weaken generic dedupe to compensate for bad parsing/crawling.
 - Test locally before changing GitHub.
 - Run `python -m py_compile brands\\retail.py` after every production change.
 - Golden rule: **If it already works, DO NOT TOUCH IT.**
+
+
+### Long Châu API crawler update (2026-10-01, 10:52 GMT+7)
+
+Production update:
+- Commit: `d6fa72b107e07f33fd4af3d015d63366e50dd640`
+- Message: `Fix Long Chau crawler to use store-list API`
+
+Problem identified:
+- The previous Long Châu implementation depended on clicking `Xem thêm nhà thuốc` and parsing rendered page text.
+- Live network debugging showed that Long Châu actually loads store records from:
+  `/lccus/ecom-prod/store-front/v3/order-promising/location-slug/list-shop`
+- The API returns structured store data and pagination fields `locationSlug`, `maxResult`, `skipCount`, `totalCount`.
+
+Production change:
+- Only the Long Châu crawler section in `brands/retail.py` was changed.
+- The crawler still uses the existing 34 first-level province/city paths.
+- A supplied province/city custom URL is still crawled as a single location.
+- Each location page is opened first, then the API is called from the Playwright browser context.
+- API pagination continues until `totalCount` is reached or no more items are returned.
+- Existing `dedupe_records_local()` remains unchanged.
+- Existing Long Châu text parser remains in the file for compatibility/fallback.
+- The existing Long Châu `click_longchau_load_more()` function was not deleted or modified outside the necessary production flow.
+
+API mapping:
+- `shopCode` -> `StoreCode`
+- `shopName` -> `StoreName`
+- `location.addressDisplay` -> `Address`
+- `provinceName` -> `Province`
+- `wardName` -> `Ward`
+- `location.coordinates.latitude` -> `Lat`
+- `location.coordinates.longitude` -> `Long`
+- `slugEcom` -> `StoreURL`
+- `SourceURL` -> current province/city locator page
+- `Method` -> `Long Chau API`
+- API `phone` is intentionally left blank because the live response observed during debugging returned the shop code in that field rather than a real customer phone number.
+
+Protected / not changed:
+- `crawler.py`
+- `app_new.py`
+- KFC crawler
+- MWG crawlers
+- Bách Hóa Xanh crawler
+- Pharmacity crawler
+- FPT Shop crawler
+- generic dedupe logic
+- output column structure
+- custom URL routing
+
+Verification status:
+- The API structure and pagination behavior were verified from the live Long Châu network trace during debugging.
+- The production code was updated directly on `main`.
+- Full local `py_compile` / direct crawler execution could not be run from this environment because the runtime cannot reach GitHub to pull the updated file. Local verification remains required before marking Long Châu as STABLE.
