@@ -140,6 +140,32 @@ For each brand:
 
 Do not modify stable brands while working on another brand.
 
+## 8. Legacy food / coffee brands
+
+These older brands remain on the generic crawler path. They are NOT part of the dedicated retail-crawler routing unless a future live investigation proves a dedicated adapter is necessary.
+
+### Current direction (2026-10-01)
+
+- **JOLLIBEE** → generic crawler
+- **PHUC LONG** → generic crawler
+- **THE COFFEE HOUSE** → generic crawler
+- **HIGHLANDS COFFEE** → generic crawler
+- **STARBUCKS** → generic crawler
+- **LOTTERIA** → generic crawler
+  - Official locator URL currently accepted:
+    `https://www.lotteria.vn/danh-sach-so-dien-thoai-cua-hang-LOTTERIA`
+- **PIZZA 4P'S** → generic crawler
+- **PIZZA HUT** → generic crawler
+- **DOMINO'S** → generic crawler
+- **BURGER KING** → generic crawler
+- **GALAXY** → generic crawler
+
+Important:
+- Do not create a separate Lotteria or Jollibee crawler just because their sites may behave differently.
+- First inspect the live DOM/network response and improve the shared generic crawler/configuration where possible.
+- **KFC is the exception**: it already has a dedicated crawler and should remain separate.
+- When debugging one of these legacy brands, do not modify the verified dedicated retail crawlers unless the issue actually belongs to that crawler.
+
 ## 6. Testing philosophy
 Always test in this order:
 1. Python syntax
