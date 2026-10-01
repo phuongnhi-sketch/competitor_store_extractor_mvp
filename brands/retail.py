@@ -1785,8 +1785,8 @@ async def crawl_longchau(start_url=None):
     Crawl Long Châu first-level province/city locator URLs.
 
     The national URL expands to the maintained 34 province/city
-    URLs. Each location page establishes the browser context, then
-    the store-list API is paginated directly.
+    URLs. Each location gets a fresh browser context to avoid
+    Cloudflare session blocking between provinces.
 
     A supplied province/city URL remains a single-page crawl.
     """
@@ -1798,11 +1798,6 @@ async def crawl_longchau(start_url=None):
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
-
-        context = await browser.new_context(
-            viewport={"width": 1440, "height": 1000},
-            locale="vi-VN",
-        )
 
         if start_url:
             requested_url = start_url.rstrip("/")
@@ -1828,179 +1823,179 @@ async def crawl_longchau(start_url=None):
                 for path in LONGCHAU_LOCATION_PATHS
             ]
 
-        # Reuse one browser page for all Long Châu locations.
-        # Keeping the same page/session reduces repeated Cloudflare
-        # challenges when moving from one province to the next.
-        page = await context.new_page()
+        for location_url in urls_to_visit:
+            context = await browser.new_context(
+                viewport={"width": 1440, "height": 1000},
+                locale="vi-VN",
+            )
 
-        try:
-            for location_url in urls_to_visit:
+            page = await context.new_page()
+
+            try:
+                ok = await safe_goto(
+                    page,
+                    location_url,
+                    wait_ms=3500,
+                )
+
+                if not ok:
+                    logs.append(
+                        f"Long Chau failed to open: {location_url}"
+                    )
+                    continue
+
+                opened_url = page.url
+                pages.append(opened_url)
+
+                path_parts = [
+                    part
+                    for part in urlparse(
+                        opened_url
+                    ).path.split("/")
+                    if part
+                ]
+
+                if (
+                    len(path_parts) < 2
+                    or path_parts[-2] != "he-thong-cua-hang"
+                ):
+                    logs.append(
+                        f"Long Chau invalid location URL after open: "
+                        f"{opened_url}"
+                    )
+                    continue
+
+                location_slug = path_parts[-1]
+
+                # DEBUG: inspect exactly what the browser sees before
+                # changing the parser/API strategy further.
                 try:
-                    ok = await safe_goto(
-                        page,
-                        location_url,
-                        wait_ms=3500,
-                    )
+                    debug_title = await page.title()
+                except Exception:
+                    debug_title = ""
 
-                    if not ok:
-                        logs.append(
-                            f"Long Chau failed to open: {location_url}"
-                        )
-                        continue
+                try:
+                    debug_body = await page.locator(
+                        "body"
+                    ).inner_text()
+                except Exception:
+                    debug_body = ""
 
-                    opened_url = page.url
-                    pages.append(opened_url)
+                debug_body_clean = clean_text(debug_body)
 
-                    path_parts = [
-                        part
-                        for part in urlparse(
-                            opened_url
-                        ).path.split("/")
-                        if part
-                    ]
+                try:
+                    debug_more_count = await page.get_by_text(
+                        "Xem thêm nhà thuốc",
+                        exact=True,
+                    ).count()
+                except Exception:
+                    debug_more_count = 0
 
-                    if (
-                        len(path_parts) < 2
-                        or path_parts[-2] != "he-thong-cua-hang"
-                    ):
-                        logs.append(
-                            f"Long Chau invalid location URL after open: "
-                            f"{opened_url}"
-                        )
-                        continue
+                debug_api_urls = []
+                debug_api_statuses = []
 
-                    location_slug = path_parts[-1]
-
-                    # DEBUG: inspect exactly what the browser sees before
-                    # changing the parser/API strategy further.
+                def debug_response(response):
                     try:
-                        debug_title = await page.title()
-                    except Exception:
-                        debug_title = ""
-
-                    try:
-                        debug_body = await page.locator(
-                            "body"
-                        ).inner_text()
-                    except Exception:
-                        debug_body = ""
-
-                    debug_body_clean = clean_text(debug_body)
-
-                    try:
-                        debug_more_count = await page.get_by_text(
-                            "Xem thêm nhà thuốc",
-                            exact=True,
-                        ).count()
-                    except Exception:
-                        debug_more_count = 0
-
-                    debug_api_urls = []
-                    debug_api_statuses = []
-
-                    def debug_response(response):
-                        try:
-                            url = response.url.split("?", 1)[0]
-                            if "list-shop" in url:
-                                debug_api_urls.append(url)
-                                debug_api_statuses.append(
-                                    f"{response.request.method} {response.status} {url}"
-                                )
-                        except Exception:
-                            pass
-
-                    page.on("response", debug_response)
-
-                    # The first visible batch can already be rendered in
-                    # the page without a capturable store-list XHR. Parse
-                    # that initial batch before triggering "Xem thêm".
-                    initial_text = debug_body
-                    initial_records = parse_longchau_text(
-                        initial_text,
-                        opened_url,
-                    )
-
-                    api_payloads, duplicate_codes = await collect_longchau_api_items(
-                        page,
-                        max_clicks=200,
-                    )
-
-                    page.remove_listener(
-                        "response",
-                        debug_response,
-                    )
-
-                    debug_preview = debug_body_clean[:1500]
-
-                    logs.append(
-                        f"Long Chau DEBUG title={debug_title!r} | "
-                        f"body_chars={len(debug_body_clean)} | "
-                        f"more_button_count={debug_more_count} | "
-                        f"list_shop_responses={len(debug_api_statuses)}"
-                    )
-
-                    if debug_api_statuses:
-                        logs.append(
-                            "Long Chau DEBUG API responses: "
-                            + " || ".join(debug_api_statuses[:10])
-                        )
-
-                    logs.append(
-                        "Long Chau DEBUG body preview: "
-                        + debug_preview.replace("\n", " | ")
-                    )
-
-                    if duplicate_codes:
-                        logs.append(
-                            "Long Chau DEBUG duplicate shopCodes: "
-                            + str(duplicate_codes[:20])
-                        )
-                    else:
-                        logs.append(
-                            "Long Chau DEBUG duplicate shopCodes: none"
-                        )
-
-                    location_records = []
-
-                    for data in api_payloads:
-                        for item in data.get("items") or []:
-                            location_records.append(
-                                parse_longchau_api_item(
-                                    item,
-                                    opened_url,
-                                )
+                        url = response.url.split("?", 1)[0]
+                        if "list-shop" in url:
+                            debug_api_urls.append(url)
+                            debug_api_statuses.append(
+                                f"{response.request.method} {response.status} {url}"
                             )
+                    except Exception:
+                        pass
 
-                    total_count = None
-                    if api_payloads:
-                        total_count = api_payloads[0].get(
-                            "totalCount"
+                page.on("response", debug_response)
+
+                # The first visible batch can already be rendered in
+                # the page without a capturable store-list XHR. Parse
+                # that initial batch before triggering "Xem thêm".
+                initial_text = debug_body
+                initial_records = parse_longchau_text(
+                    initial_text,
+                    opened_url,
+                )
+
+                api_payloads, duplicate_codes = await collect_longchau_api_items(
+                    page,
+                    max_clicks=200,
+                )
+
+                page.remove_listener(
+                    "response",
+                    debug_response,
+                )
+
+                debug_preview = debug_body_clean[:1500]
+
+                logs.append(
+                    f"Long Chau DEBUG title={debug_title!r} | "
+                    f"body_chars={len(debug_body_clean)} | "
+                    f"more_button_count={debug_more_count} | "
+                    f"list_shop_responses={len(debug_api_statuses)}"
+                )
+
+                if debug_api_statuses:
+                    logs.append(
+                        "Long Chau DEBUG API responses: "
+                        + " || ".join(debug_api_statuses[:10])
+                    )
+
+                logs.append(
+                    "Long Chau DEBUG body preview: "
+                    + debug_preview.replace("\n", " | ")
+                )
+
+                if duplicate_codes:
+                    logs.append(
+                        "Long Chau DEBUG duplicate shopCodes: "
+                        + str(duplicate_codes[:20])
+                    )
+                else:
+                    logs.append(
+                        "Long Chau DEBUG duplicate shopCodes: none"
+                    )
+
+                location_records = []
+
+                for data in api_payloads:
+                    for item in data.get("items") or []:
+                        location_records.append(
+                            parse_longchau_api_item(
+                                item,
+                                opened_url,
+                            )
                         )
 
-                    api_pages = len(api_payloads)
-
-                    records.extend(initial_records)
-                    records.extend(location_records)
-
-                    logs.append(
-                        f"Long Chau {opened_url}: "
-                        f"initial DOM={len(initial_records)} records | "
-                        f"API={len(location_records)} records | "
-                        f"API total={total_count} | "
-                        f"API pages={api_pages}"
+                total_count = None
+                if api_payloads:
+                    total_count = api_payloads[0].get(
+                        "totalCount"
                     )
 
-                except Exception as e:
-                    logs.append(
-                        f"Long Chau error: {location_url} | "
-                        f"{type(e).__name__}: {e}"
-                    )
+                api_pages = len(api_payloads)
 
-                finally:
-                    await page.wait_for_timeout(1500)
+                records.extend(initial_records)
+                records.extend(location_records)
 
-        finally:
-            await page.close()
+                logs.append(
+                    f"Long Chau {opened_url}: "
+                    f"initial DOM={len(initial_records)} records | "
+                    f"API={len(location_records)} records | "
+                    f"API total={total_count} | "
+                    f"API pages={api_pages}"
+                )
+
+            except Exception as e:
+                logs.append(
+                    f"Long Chau error: {location_url} | "
+                    f"{type(e).__name__}: {e}"
+                )
+
+            finally:
+                await page.wait_for_timeout(1500)
+                await page.close()
+                await context.close()
 
         await browser.close()
 
@@ -2011,7 +2006,6 @@ async def crawl_longchau(start_url=None):
     )
 
     return records, pages, logs
-
 
 def parse_longchau_text(
     text,
