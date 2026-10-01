@@ -1579,14 +1579,17 @@ def parse_longchau_text(
     source_url,
 ):
     """
-    Long Châu location pages expose:
+    Parse Long Châu province/city locator pages.
 
-        Có X nhà thuốc...
+    Current Long Châu pages expose the store list as:
+        Có X nhà thuốc tại <province>
+        <store address>
+        Địa chỉ cũ: ...
+        ...
+        Xem thêm nhà thuốc
 
-    followed by store addresses.
-
-    We extract address-like lines and create one record
-    per unique address.
+    The store address itself is the store-level record. Old-address
+    lines are deliberately ignored.
     """
 
     records = []
@@ -1597,78 +1600,123 @@ def parse_longchau_text(
         if clean_text(x)
     ]
 
-    # Province / ward information from page title/context
     province = ""
-    ward = ""
 
+    # --------------------------------------------------------
+    # Current province/city heading
+    # --------------------------------------------------------
     for line in lines:
+        normalized = normalize_text(line)
 
-        normalized = normalize_text(
-            line
+        match = re.match(
+            r"^co\s+\d+\s+nha thuoc tai\s+(.+)$",
+            normalized,
         )
 
-        if re.match(
-            r"^co\s+\d+\s+nha thuoc tai\s+",
-            normalized,
-        ):
+        if match:
+            # Keep the original accented text from the source line.
             province = re.sub(
                 r"^co\s+\d+\s+nha thuoc tai\s+",
                 "",
                 line,
                 flags=re.I,
             ).strip()
+            break
 
-        if (
-            "phuong " in normalized
-            or "xa " in normalized
-            or " p. " in f" {normalized} "
-            or " x. " in f" {normalized} "
-        ):
-            if len(line) < 150:
-                ward = line
-
+    # --------------------------------------------------------
+    # Parse store address lines.
+    #
+    # Current pages use short address lines such as:
+    #   248 Hồ Văn Cống, P. Chánh Hiệp, TP. Hồ Chí Minh
+    #   A17 Đường HL5, X. Long Hải, TP. Hồ Chí Minh
+    #
+    # extract_address() is intentionally conservative, but the
+    # Long Châu locator has a few abbreviated address forms that
+    # should be accepted explicitly here.
+    # --------------------------------------------------------
     for line in lines:
+        normalized = normalize_text(line)
 
-        # Ignore obvious UI text
-        normalized = normalize_text(
-            line
-        )
-
+        # Stop/skip page UI and non-store content.
         if any(
             phrase in normalized
             for phrase in [
                 "he thong nha thuoc",
                 "tim kiem nha thuoc",
-                "xem them nha thuoc",
                 "nha thuoc gan ban",
                 "thoi gian hoat dong",
+                "xem them nha thuoc",
+                "long chau la he thong nha thuoc",
+                "nha thuoc chinh hang",
+                "chuyen thuoc theo toa",
+                "duoc si tu van tai cho",
+                "mua le voi gia si",
+                "giao hang tan noi",
+                "doi tra nguyen gia",
+                "hinh anh nhan dang",
             ]
         ):
             continue
 
-        address = extract_address(
-            line
+        # Never treat historical addresses as current stores.
+        if normalized.startswith("dia chi cu"):
+            continue
+
+        # The province heading is context, not a store.
+        if re.match(
+            r"^co\s+\d+\s+nha thuoc tai\s+",
+            normalized,
+        ):
+            continue
+
+        # Current Long Châu store lines normally contain one of
+        # these location markers. Keep the generic address parser
+        # as a fallback for older page formats.
+        has_longchau_location_marker = any(
+            marker in normalized
+            for marker in [
+                " p. ",
+                " x. ",
+                "tp. ",
+                " phuong ",
+                " xa ",
+                " thanh pho ",
+                " tinh ",
+                " quan ",
+                " huyen ",
+                " duong ",
+            ]
+        )
+
+        address = (
+            extract_address(line)
+            if has_longchau_location_marker
+            else ""
         )
 
         if not address:
             continue
 
-        # Avoid old-address lines
-        if normalized.startswith(
-            "dia chi cu"
-        ):
-            continue
-
-        phone = extract_phone(
-            line
+        # Derive ward from THIS store line, not from the last
+        # address encountered on the page.
+        ward = ""
+        ward_match = re.search(
+            r"(?:^|,\s*)(P\.|X\.|Phường|Xã)\s+([^,]+)",
+            line,
+            flags=re.I,
         )
+
+        if ward_match:
+            ward = clean_text(
+                ward_match.group(0)
+            )
+
+        phone = extract_phone(line)
 
         records.append(
             make_record(
                 brand="NHA THUOC LONG CHAU",
-                store_name=(
-                    "Nhà thuốc Long Châu"
-                ),
+                store_name="Nhà thuốc Long Châu",
                 address=address,
                 province=province,
                 ward=ward,
@@ -1679,7 +1727,6 @@ def parse_longchau_text(
         )
 
     return records
-
 
 # ============================================================
 # PHARMACITY
