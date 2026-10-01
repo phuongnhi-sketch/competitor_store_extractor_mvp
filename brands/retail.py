@@ -1729,7 +1729,7 @@ async def collect_longchau_api_items(page, max_clicks=200):
             if not clicked:
                 break
 
-        return results
+        return results, duplicate_codes
 
     finally:
         try:
@@ -1916,7 +1916,7 @@ async def crawl_longchau(start_url=None):
                     opened_url,
                 )
 
-                api_payloads = await collect_longchau_api_items(
+                api_payloads, duplicate_codes = await collect_longchau_api_items(
                     page,
                     max_clicks=200,
                 )
