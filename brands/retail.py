@@ -1531,41 +1531,33 @@ async def fetch_longchau_api_page(
     skip_count,
     max_result=50,
 ):
-    """Fetch one Long Châu store-list API page from browser context."""
+    """Fetch one Long Châu store-list API page via Playwright request."""
     payload = {
         "locationSlug": location_slug,
         "maxResult": max_result,
         "skipCount": skip_count,
     }
 
-    return await page.evaluate(
-        """
-        async ({apiUrl, payload}) => {
-            const response = await fetch(apiUrl, {
-                method: "POST",
-                headers: {
-                    "accept": "application/json, text/plain, */*",
-                    "content-type": "application/json",
-                    "order-channel": "1",
-                    "x-channel": "EStore"
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                throw new Error(
-                    "Long Chau API HTTP " + response.status
-                );
-            }
-
-            return await response.json();
-        }
-        """,
-        {
-            "apiUrl": LONGCHAU_STORE_API,
-            "payload": payload,
+    response = await page.request.post(
+        LONGCHAU_STORE_API,
+        data=payload,
+        headers={
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "order-channel": "1",
+            "origin": "https://nhathuoclongchau.com.vn",
+            "referer": "https://nhathuoclongchau.com.vn/",
+            "x-channel": "EStore",
         },
     )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"Long Chau API HTTP {response.status}: "
+            f"{await response.text()}"
+        )
+
+    return await response.json()
 
 
 def parse_longchau_api_item(item, source_url):
