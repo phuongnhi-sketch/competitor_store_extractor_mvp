@@ -1517,19 +1517,107 @@ async def click_longchau_load_more(page, max_clicks=200):
             break
 
 
+
+LONGCHAU_STORE_API = (
+    "https://api.nhathuoclongchau.com.vn/"
+    "lccus/ecom-prod/store-front/v3/"
+    "order-promising/location-slug/list-shop"
+)
+
+
+async def fetch_longchau_api_page(
+    page,
+    location_slug,
+    skip_count,
+    max_result=50,
+):
+    """Fetch one Long Châu store-list API page from browser context."""
+    payload = {
+        "locationSlug": location_slug,
+        "maxResult": max_result,
+        "skipCount": skip_count,
+    }
+
+    return await page.evaluate(
+        """
+        async ({apiUrl, payload}) => {
+            const response = await fetch(apiUrl, {
+                method: "POST",
+                headers: {
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "application/json",
+                    "order-channel": "1",
+                    "x-channel": "EStore"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(
+                    "Long Chau API HTTP " + response.status
+                );
+            }
+
+            return await response.json();
+        }
+        """,
+        {
+            "apiUrl": LONGCHAU_STORE_API,
+            "payload": payload,
+        },
+    )
+
+
+def parse_longchau_api_item(item, source_url):
+    """Convert one Long Châu API store item to a standard record."""
+    item = item or {}
+    location = item.get("location") or {}
+    coordinates = location.get("coordinates") or {}
+
+    slug = (
+        item.get("slugEcom")
+        or item.get("slug_Ecom")
+        or ""
+    )
+
+    store_url = ""
+    if slug:
+        store_url = urljoin(
+            "https://nhathuoclongchau.com.vn/",
+            slug,
+        )
+
+    return make_record(
+        brand="NHA THUOC LONG CHAU",
+        store_code=item.get("shopCode") or "",
+        store_name=item.get("shopName")
+        or "Nhà thuốc Long Châu",
+        address=(
+            location.get("addressDisplay")
+            or location.get("address")
+            or ""
+        ),
+        province=item.get("provinceName") or "",
+        ward=item.get("wardName") or "",
+        phone="",
+        lat=coordinates.get("latitude", ""),
+        lon=coordinates.get("longitude", ""),
+        store_url=store_url,
+        source_url=source_url,
+        method="Long Chau API",
+    )
+
+
 async def crawl_longchau(start_url=None):
     """
-    Crawl Long Châu using the current first-level
-    province/city locator URLs.
+    Crawl Long Châu first-level province/city locator URLs.
 
     The national URL expands to the maintained 34 province/city
-    URLs. Each province/city page is then fully expanded through
-    Long Châu's own "Xem thêm nhà thuốc" control.
+    URLs. Each location page establishes the browser context, then
+    the store-list API is paginated directly.
 
-    If a specific Long Châu location URL is supplied, only that
-    location URL is crawled.
+    A supplied province/city URL remains a single-page crawl.
     """
-
     default_root = "https://nhathuoclongchau.com.vn/he-thong-cua-hang"
 
     records = []
@@ -1546,7 +1634,9 @@ async def crawl_longchau(start_url=None):
 
         if start_url:
             requested_url = start_url.rstrip("/")
-            requested_path = urlparse(requested_url).path.rstrip("/")
+            requested_path = urlparse(
+                requested_url
+            ).path.rstrip("/")
 
             if requested_path == "/he-thong-cua-hang":
                 urls_to_visit = [
@@ -1585,25 +1675,79 @@ async def crawl_longchau(start_url=None):
                 opened_url = page.url
                 pages.append(opened_url)
 
-                # Long Châu has its own load-more behavior.
-                # Do not use the shared retail helper here.
-                await click_longchau_load_more(
-                    page,
-                    max_clicks=200,
-                )
+                path_parts = [
+                    part
+                    for part in urlparse(
+                        opened_url
+                    ).path.split("/")
+                    if part
+                ]
 
-                text = await get_body_text(page)
+                if (
+                    len(path_parts) < 2
+                    or path_parts[-2] != "he-thong-cua-hang"
+                ):
+                    logs.append(
+                        f"Long Chau invalid location URL after open: "
+                        f"{opened_url}"
+                    )
+                    continue
 
-                location_records = parse_longchau_text(
-                    text,
-                    opened_url,
-                )
+                location_slug = path_parts[-1]
+
+                skip_count = 0
+                total_count = None
+                location_records = []
+                api_pages = 0
+
+                while True:
+                    data = await fetch_longchau_api_page(
+                        page,
+                        location_slug,
+                        skip_count,
+                        max_result=50,
+                    )
+
+                    items = data.get("items") or []
+
+                    if total_count is None:
+                        total_count = data.get(
+                            "totalCount"
+                        )
+
+                    api_pages += 1
+
+                    for item in items:
+                        location_records.append(
+                            parse_longchau_api_item(
+                                item,
+                                opened_url,
+                            )
+                        )
+
+                    received = len(items)
+
+                    if received == 0:
+                        break
+
+                    skip_count += received
+
+                    if (
+                        total_count is not None
+                        and skip_count >= total_count
+                    ):
+                        break
+
+                    if received < 50:
+                        break
 
                 records.extend(location_records)
 
                 logs.append(
                     f"Long Chau {opened_url}: "
-                    f"{len(location_records)} records"
+                    f"{len(location_records)} records | "
+                    f"API total={total_count} | "
+                    f"API pages={api_pages}"
                 )
 
             except Exception as e:
