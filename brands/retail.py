@@ -1267,8 +1267,13 @@ async def crawl_fptshop(start_url=None):
                     f"{type(e).__name__}: {e}"
                 )
 
-            finally:
-                await page.close()
+                finally:
+                    # Keep the same page/session alive for the next
+                    # location instead of creating a new page each time.
+                    await page.wait_for_timeout(1500)
+
+        finally:
+            await page.close()
 
         await browser.close()
 
@@ -1828,15 +1833,19 @@ async def crawl_longchau(start_url=None):
                 for path in LONGCHAU_LOCATION_PATHS
             ]
 
-        for location_url in urls_to_visit:
-            page = await context.new_page()
+        # Reuse one browser page for all Long Châu locations.
+        # Keeping the same page/session reduces repeated Cloudflare
+        # challenges when moving from one province to the next.
+        page = await context.new_page()
 
-            try:
-                ok = await safe_goto(
-                    page,
-                    location_url,
-                    wait_ms=2500,
-                )
+        try:
+            for location_url in urls_to_visit:
+                try:
+                    ok = await safe_goto(
+                        page,
+                        location_url,
+                        wait_ms=3500,
+                    )
 
                 if not ok:
                     logs.append(
