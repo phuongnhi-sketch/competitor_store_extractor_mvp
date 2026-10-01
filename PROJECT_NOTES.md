@@ -261,11 +261,12 @@ Important reusable rule for future retail crawlers:
 - Do not weaken or bypass Cloudflare. The goal is to reproduce the site's normal browser flow and capture data already delivered to the page.
 
 Long Châu production direction:
-- The current crawler now opens the real Long Châu province/city page, reloads it, captures the site's own store-list XHR response, then clicks the real 'Xem thêm nhà thuốc' control and captures each subsequent XHR response.
-- API JSON is parsed from those real browser responses.
-- The synthetic `page.request.post()` approach is removed.
-- The existing API field mapping and local dedupe are preserved.
-- This approach should be reused as a pattern for other protected retail sites if they expose data through browser XHR but block synthetic HTTP requests.
+- The current crawler opens the real Long Châu province/city page and reloads it without requiring an initial store-list XHR.
+- The first visible store batch can already be rendered by the page; the real browser XHR is then triggered by clicking the real 'Xem thêm nhà thuốc' control, starting from the next batch (observed with skipCount=5).
+- The crawler captures those real browser XHR responses and parses their JSON.
+- The synthetic `page.request.post()` and manual `fetch()` approaches are not used.
+- Existing API field mapping and local dedupe are preserved.
+- This browser-XHR capture pattern should be reused for other protected retail sites only when live network behavior shows that the site itself delivers the required data through browser requests.
 
 Brand investigation playbook:
 - MWG (THE GIOI DI DONG / DIEN MAY XANH): use verified locator-page DOM + real 'Xem thêm' flow; do not replace with synthetic API calls unless a new live test requires it.
