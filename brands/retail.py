@@ -1562,16 +1562,10 @@ async def collect_longchau_api_items(page, max_clicks=200):
     page.on("response", capture_response)
 
     try:
-        # Reload only to give the page a clean browser flow.
-        # Do not wait for a mandatory initial API response.
-        await page.reload(
-            wait_until="domcontentloaded",
-            timeout=60000,
-        )
-
-        # Give browser-side XHR a short window to complete if the page
-        # happens to request the store API during reload.
-        await page.wait_for_timeout(2500)
+        # Keep the already-open Long Châu page/session.
+        # Reloading can trigger Cloudflare again, while the live page
+        # already contains the "Xem thêm nhà thuốc" button.
+        await page.wait_for_timeout(1500)
 
         results = list(captured_payloads)
 
@@ -2019,12 +2013,13 @@ def parse_longchau_text(
             r"^co\s+\d+\s+nha thuoc tai\s+",
             normalized,
         ):
-            province = re.sub(
-                r"^co\s+\d+\s+nha thuoc tai\s+",
-                "",
+            province_match = re.match(
+                r"^Có\s+\d+\s+nhà\s+thuốc\s+tại\s+(.+)$",
                 line,
                 flags=re.I,
-            ).strip()
+            )
+            if province_match:
+                province = province_match.group(1).strip()
             break
 
     # --------------------------------------------------------
@@ -2078,7 +2073,7 @@ def parse_longchau_text(
         # Accept both abbreviated and full Vietnamese forms.
         has_current_location = re.search(
             r",\s*(?:P\.|X\.|Phường|Xã|Quận|Huyện|"
-            r"TP\.|Tỉnh|Thành phố|Thị trấn)\b",
+            r"TP\.|Tỉnh|Thành phố|Thị trấn)(?:\s|,|$)",
             line,
             flags=re.I,
         )
