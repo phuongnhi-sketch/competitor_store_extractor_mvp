@@ -1572,9 +1572,30 @@ async def collect_longchau_api_items(page, max_clicks=200):
         # Keep a simple item-level dedupe because the browser can emit
         # the same response more than once.
         seen_codes = set()
+        duplicate_codes = []
 
         def add_unique_payloads(payloads):
             unique_payloads = []
+
+            for payload_index, payload in enumerate(payloads):
+                response_items = payload.get("items") or [] if isinstance(payload, dict) else []
+
+                for item_index, item in enumerate(response_items):
+                    if not isinstance(item, dict):
+                        continue
+
+                    code = clean_text(
+                        item.get("shopCode") or ""
+                    )
+
+                    if code and code in seen_codes:
+                        duplicate_codes.append(
+                            {
+                                "shopCode": code,
+                                "payloadIndex": payload_index,
+                                "itemIndex": item_index,
+                            }
+                        )
 
             for payload in payloads:
                 if not isinstance(payload, dict):
@@ -1924,6 +1945,16 @@ async def crawl_longchau(start_url=None):
                     "Long Chau DEBUG body preview: "
                     + debug_preview.replace("\n", " | ")
                 )
+
+                if duplicate_codes:
+                    logs.append(
+                        "Long Chau DEBUG duplicate shopCodes: "
+                        + str(duplicate_codes[:20])
+                    )
+                else:
+                    logs.append(
+                        "Long Chau DEBUG duplicate shopCodes: none"
+                    )
 
                 location_records = []
 
