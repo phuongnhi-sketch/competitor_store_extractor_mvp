@@ -1569,35 +1569,53 @@ async def collect_longchau_api_items(page, max_clicks=200):
 
         results = list(captured_payloads)
 
-        # Keep a simple item-level dedupe because the browser can emit
-        # the same response more than once.
-        seen_codes = set()
+        # Long Châu can return the same shopCode for more than one
+        # store after the current administrative-address migration.
+        # Therefore shopCode alone is NOT a safe dedupe key here.
+        #
+        # The reconciliation test confirmed that the API contains
+        # 501 unique store addresses while two shopCodes (80023/80089)
+        # repeat. Those repeated codes must be kept when their addresses
+        # are different; otherwise the crawler incorrectly returns 499
+        # API stores and loses two stores.
+        #
+        # Prefer normalized address as the store identity. Fall back to
+        # shopCode only when the API item has no usable address.
+        seen_store_keys = set()
         duplicate_codes = []
+
+        def api_store_key(item):
+            item = item or {}
+            location = item.get("location") or {}
+
+            address = clean_text(
+                location.get("addressDisplay")
+                or location.get("address")
+                or ""
+            )
+
+            code = clean_text(
+                item.get("shopCode") or ""
+            )
+
+            if address:
+                return (
+                    "address",
+                    normalize_text(address),
+                )
+
+            if code:
+                return (
+                    "code",
+                    code.lower(),
+                )
+
+            return None
 
         def add_unique_payloads(payloads):
             unique_payloads = []
 
             for payload_index, payload in enumerate(payloads):
-                response_items = payload.get("items") or [] if isinstance(payload, dict) else []
-
-                for item_index, item in enumerate(response_items):
-                    if not isinstance(item, dict):
-                        continue
-
-                    code = clean_text(
-                        item.get("shopCode") or ""
-                    )
-
-                    if code and code in seen_codes:
-                        duplicate_codes.append(
-                            {
-                                "shopCode": code,
-                                "payloadIndex": payload_index,
-                                "itemIndex": item_index,
-                            }
-                        )
-
-            for payload in payloads:
                 if not isinstance(payload, dict):
                     continue
 
@@ -1607,18 +1625,29 @@ async def collect_longchau_api_items(page, max_clicks=200):
 
                 new_items = []
 
-                for item in items:
+                for item_index, item in enumerate(items):
                     if not isinstance(item, dict):
                         continue
 
-                    code = clean_text(
-                        item.get("shopCode") or ""
-                    )
+                    key = api_store_key(item)
 
-                    if code:
-                        if code in seen_codes:
-                            continue
-                        seen_codes.add(code)
+                    if key is not None and key in seen_store_keys:
+                        code = clean_text(
+                            item.get("shopCode") or ""
+                        )
+                        if code:
+                            duplicate_codes.append(
+                                {
+                                    "shopCode": code,
+                                    "payloadIndex": payload_index,
+                                    "itemIndex": item_index,
+                                    "reason": "duplicate store address",
+                                }
+                            )
+                        continue
+
+                    if key is not None:
+                        seen_store_keys.add(key)
 
                     new_items.append(item)
 
