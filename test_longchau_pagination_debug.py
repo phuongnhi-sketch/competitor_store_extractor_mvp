@@ -5,7 +5,7 @@ import re
 from playwright.async_api import async_playwright
 
 
-URL = "https://nhathuoclongchau.com.vn/he-thong/cua-hang/ho-chi-minh"
+URL = "https://nhathuoclongchau.com.vn/he-thong-nha-thuoc/ho-chi-minh"
 API = "https://api.nhathuoclongchau.com.vn/lccus/ecom-prod/store-front/v3/order-promising/location-slug/list-shop"
 
 
