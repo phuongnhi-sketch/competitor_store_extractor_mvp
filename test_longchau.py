@@ -15,6 +15,7 @@ The test is intentionally limited to Long Châu so existing KFC,
 Lotteria, DMX, TGDD, FPT Shop, Pharmacity and BHX crawlers are untouched.
 """
 
+import asyncio
 import sys
 
 from brands.retail import crawl_longchau
@@ -35,7 +36,7 @@ def print_log_lines(logs):
         print(line)
 
 
-def main():
+async def main():
     start_url = (
         sys.argv[1].rstrip("/")
         if len(sys.argv) > 1
@@ -51,7 +52,8 @@ def main():
     print("Only the existing crawl_longchau() is executed.")
     print()
 
-    records, pages, logs = crawl_longchau(start_url)
+    # crawl_longchau() is async because it uses Playwright.
+    records, pages, logs = await crawl_longchau(start_url)
 
     print_log_lines(logs)
 
@@ -98,4 +100,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
