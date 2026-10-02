@@ -307,3 +307,62 @@ Current Long Châu status:
 - Before marking Long Châu STABLE, run `python -m py_compile brands\\retail.py` and a direct production test after pulling the latest commit.
 - Do not change other retail crawlers based on Long Châu findings.
 
+
+
+### Long Châu pagination investigation — 2026-10-02
+
+Current issue:
+- Hồ Chí Minh locator reports totalCount=506.
+- The real browser XHR pagination uses sequential skipCount=5,10,...,505 with maxResult=5.
+- The observed run captured 101 API responses and 501 raw API items.
+- API pagination contains overlapping shopCode values, so the captured API set was smaller than totalCount.
+- The previous debug run reported 499 unique API shopCodes and 2 duplicate shopCodes.
+- The previous DOM-link test is NOT sufficient for reconciliation because its a[href*="/he-thong-cua-hang/"] selector returned 0 store links.
+- Therefore do not infer the missing stores from that DOM-link result.
+
+Important correction:
+- 506 - 499 = 7 is NOT the number of missing stores from the crawler.
+- The locator page already renders the first batch of 5 stores before the captured API pagination starts at skipCount=5.
+- The relevant reconciliation is therefore initial DOM records + API unique records, after checking overlap.
+
+New debug test:
+- test_longchau_reconcile.py
+- Commit: 28cc2e086927b9c28edc1f4e19587d911a1c8276
+- Purpose:
+  1. Parse the initial 5 rendered stores using the existing parse_longchau_text().
+  2. Capture the real browser XHR responses while clicking Xem thêm nhà thuốc.
+  3. Parse the final page body again after all clicks.
+  4. Compare API unique stores and final DOM parser stores by normalized address.
+  5. Print API-only and DOM-only stores.
+  6. Print the overlap between the initial DOM batch and API records.
+- This test is diagnostic only. Production brands/retail.py has NOT been changed by this investigation.
+
+Previous debug files:
+- test_longchau_pagination_debug.py — shows request/response pagination and duplicate shopCodes.
+- test_longchau_missing_debug.py — attempted DOM link reconciliation; its DOM-link result was 0 and should not be used to conclude that 499 stores are missing from the page.
+
+Production protection:
+- Do not change brands/retail.py yet.
+- Do not change dedupe.py.
+- Do not change KFC, MWG, BHX, Pharmacity, FPT, or generic crawler code based on this issue.
+- First run test_longchau_reconcile.py locally and identify the exact two missing records / pagination behavior.
+- Only after the root cause is proven should the Long Châu production collector be changed.
+
+Local command:
+python test_longchau_reconcile.py
+
+Expected investigation output to record:
+- Initial DOM parser records
+- Final DOM parser records
+- API unique shopCodes
+- API unique addresses
+- API-only stores
+- DOM-only stores
+- Initial DOM addresses also in API
+
+Verification still required after any production fix:
+1. python -m py_compile brands\retail.py
+2. Direct Long Châu HCMC crawl
+3. Confirm expected store count and unique StoreCode
+4. Confirm no duplicate StoreCode caused by pagination
+5. Test Streamlit only after the direct crawler is correct
