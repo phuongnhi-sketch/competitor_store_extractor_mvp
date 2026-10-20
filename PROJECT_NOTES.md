@@ -366,3 +366,20 @@ Verification still required after any production fix:
 3. Confirm expected store count and unique StoreCode
 4. Confirm no duplicate StoreCode caused by pagination
 5. Test Streamlit only after the direct crawler is correct
+
+### Long Châu Streamlit app verification — 2026-10-20
+
+User-tested result:
+- The user ran the Long Châu crawl through the Streamlit app (streamlit run app_new.py) and confirmed the app test completed successfully.
+- Test URL: https://nhathuoclongchau.com.vn/he-thong-cua-hang/ho-chi-minh.
+- The preceding direct-crawler test returned 508 records: 5 initial DOM records plus 503 API records; API totalCount was 508.
+- Generic dedupe_records() removed 0 records (508 before, 508 after).
+- The separate raw-API diagnostic was blocked by Cloudflare in its independent browser session and captured 0 API payloads. This is a diagnostic-session limitation, not evidence that the successful production/app crawl failed.
+- The successful app run verifies end-to-end app execution for this Hồ Chí Minh URL. It does not by itself prove every returned record is unique or that all other locations work.
+
+Next verification:
+1. Keep the changes isolated to Long Châu.
+2. If investigating completeness, reconcile the 508 returned records by StoreCode and normalized address, and check overlap between the 5 initial DOM records and API records.
+3. Test other Long Châu locations separately before marking the crawler fully STABLE.
+4. Do not change generic dedupe or other brand crawlers based only on the failed standalone raw-API diagnostic.
+
